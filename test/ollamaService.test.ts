@@ -62,6 +62,20 @@ describe("parseStreamLine", () => {
     expect(parseStreamLine(line, "chat")).toEqual({ token: "", done: true });
   });
 
+  it("falls back to an empty token when the chat field is absent", () => {
+    // Ollama's final chat chunk can be {"done":true} with no message field.
+    const line = JSON.stringify({ done: true });
+    expect(parseStreamLine(line, "chat")).toEqual({ token: "", done: true });
+  });
+
+  it("falls back to an empty token when the generate field is absent", () => {
+    const line = JSON.stringify({ done: true });
+    expect(parseStreamLine(line, "generate")).toEqual({
+      token: "",
+      done: true,
+    });
+  });
+
   it("throws OllamaError when the chunk carries an error", () => {
     const line = JSON.stringify({ error: "model not found" });
     expect(() => parseStreamLine(line, "chat")).toThrow(OllamaError);
