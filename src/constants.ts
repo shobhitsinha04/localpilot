@@ -28,7 +28,7 @@ export const OLLAMA_INSTALL_SCRIPT_URL = "https://ollama.com/install.sh";
 // RAM thresholds in GiB. Mapping:
 //   < 16        -> Tier 1
 //   16 .. < 24  -> Tier 2
-//   24 .. 36    -> Tier 3   (36GB maps to Tier 3 — decision locked 2026-06-01)
+//   24 .. 36    -> Tier 3   (36GB maps to Tier 3 — DECISIONS 012)
 //   > 36        -> Tier 4
 export const TIER_2_MIN_GB = 16;
 export const TIER_3_MIN_GB = 24;

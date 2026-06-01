@@ -31,8 +31,8 @@ const BYTES_PER_GB = 1024 ** 3;
 // ----------------------------------------------------------------------------
 
 /**
- * Map total unified memory (GiB) to a tier. Boundaries (HARDWARE_PROFILES.md,
- * 36GB resolved to Tier 3 on 2026-06-01):
+ * Map total unified memory (GiB) to a tier. Boundaries (HARDWARE_PROFILES.md;
+ * 36GB resolves to Tier 3 — DECISIONS 012):
  *   < 16 -> 1, 16..<24 -> 2, 24..36 -> 3, > 36 -> 4
  */
 export function mapMemoryToTier(totalMemoryGB: number): Tier {
