@@ -1,0 +1,18 @@
+# Files excluded from the packaged .vsix (the bundled dist/extension.js is all
+# the runtime needs). Keeps the published extension small.
+.vscode/**
+.github/**
+src/**
+test/**
+docs/**
+node_modules/**
+**/*.ts
+**/*.map
+esbuild.js
+eslint.config.mjs
+vitest.config.ts
+tsconfig.json
+.prettierrc.json
+.prettierignore
+.gitignore
+.eslintcache
