@@ -61,4 +61,14 @@ describe("ConfigManager", () => {
     expect(loaded.embeddingModel).toBeNull();
     expect(loaded.workspaceIndexes).toEqual({});
   });
+
+  it("rejects (does not silently swallow) when the storage dir can't be created", async () => {
+    // Point the storage dir under an existing *file* so mkdir fails (ENOTDIR).
+    // A failed save must surface as a rejection so callers don't proceed as if
+    // state was persisted.
+    const blocker = path.join(dir, "blocker");
+    await writeFile(blocker, "x", "utf8");
+    const config = new ConfigManager(path.join(blocker, "nested"));
+    await expect(config.save(ConfigManager.defaults())).rejects.toThrow();
+  });
 });
