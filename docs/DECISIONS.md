@@ -307,3 +307,31 @@ an analytics platform.
   HTTP call still goes to localhost only.
 - Post-v1: revisit observability (a thin local proxy, or an opt-in Helicone
   cloud dashboard) under a new decision.
+
+---
+
+### 012 — 36GB RAM maps to Tier 3
+
+**Decision:** A machine with exactly 36GB of unified memory maps to Tier 3
+(14B chat / 3B autocomplete), not Tier 4. The tier boundaries are:
+`<16 → T1`, `16–<24 → T2`, `24–36 → T3`, `>36 → T4`.
+
+**Date:** 2026-06-01
+
+**Why:** HARDWARE_PROFILES.md is internally ambiguous at 36GB — its summary
+table lists Tier 3 as "24–36GB" and Tier 4 as "36GB+" (an overlap), while the
+detailed text groups 36GB M-Pro machines (and the onboarding example, a "36GB
+M3 Pro") under Tier 3. Tier 3 is the safer and more consistent reading: the
+14B model (~9GB) is comfortable on 36GB, whereas the 32B model (~22GB) is tight
+on a 36GB machine whose Pro-class memory bandwidth is lower than a Max. This
+also matches the device the spec itself uses as the Tier 3 example.
+
+**Alternatives considered:**
+- 36GB → Tier 4 (≥36 runs the 32B model) — rejected: contradicts the detailed
+  machine lists, and risks memory pressure on 36GB Pro-class machines.
+
+**Consequences:**
+- `mapMemoryToTier` uses `<= TIER_3_MAX_GB` (36) for Tier 3; `TIER_3_MAX_GB = 36`.
+- Boundary unit tests assert 36 → Tier 3 and 37 → Tier 4.
+- Previously recorded only as a code comment in constants.ts; now formalised
+  here (logged in response to the Phase 1 Judge review).

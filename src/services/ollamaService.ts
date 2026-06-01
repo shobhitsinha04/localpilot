@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import * as path from "node:path";
 
 import {
   OLLAMA_BINARY_PATHS,
@@ -372,8 +373,15 @@ export class OllamaService {
   // --------------------------------------------------------------------------
 
   private findBinary(): string | null {
-    for (const path of OLLAMA_BINARY_PATHS) {
-      if (existsSync(path)) return path;
+    for (const candidate of OLLAMA_BINARY_PATHS) {
+      if (existsSync(candidate)) return candidate;
+    }
+    // Fall back to scanning PATH so a non-standard install location (e.g. a
+    // custom Homebrew prefix) is still found after install().
+    for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+      if (dir.length === 0) continue;
+      const candidate = path.join(dir, "ollama");
+      if (existsSync(candidate)) return candidate;
     }
     return null;
   }

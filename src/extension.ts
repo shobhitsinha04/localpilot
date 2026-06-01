@@ -14,23 +14,30 @@ import type { Logger } from "./types";
 // Service talks to Ollama directly.
 
 let ollamaService: OllamaService | undefined;
+/** Guards against overlapping smoke-test runs (activation + manual command). */
+let smokeTestInFlight = false;
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("LocalPilot");
   context.subscriptions.push(channel);
   const logger = createLogger(channel);
 
+  // Create the service synchronously here (not inside the async smoke test) so
+  // deactivate() can always stop the `ollama serve` process we may have spawned.
+  ollamaService = new OllamaService({ logger });
+  const ollama = ollamaService;
+
   context.subscriptions.push(
     vscode.commands.registerCommand("localpilot.helloWorld", () => {
       vscode.window.showInformationMessage("Hello World from LocalPilot!");
     }),
     vscode.commands.registerCommand("localpilot.runSmokeTest", () => {
-      void runSmokeTest(context, logger, channel);
+      void runSmokeTest(context, logger, channel, ollama);
     }),
   );
 
   // Fire-and-forget so a long model pull never blocks VS Code activation.
-  void runSmokeTest(context, logger, channel);
+  void runSmokeTest(context, logger, channel, ollama);
 }
 
 export function deactivate(): void {
@@ -66,7 +73,13 @@ async function runSmokeTest(
   context: vscode.ExtensionContext,
   logger: Logger,
   channel: vscode.OutputChannel,
+  ollama: OllamaService,
 ): Promise<void> {
+  if (smokeTestInFlight) {
+    logger.warn("Smoke test already running; ignoring duplicate trigger.");
+    return;
+  }
+  smokeTestInFlight = true;
   channel.show(true);
   logger.info("LocalPilot Phase 1 smoke test starting...");
 
@@ -115,20 +128,19 @@ async function runSmokeTest(
     });
 
     // 3. Ensure Ollama is installed and running.
-    ollamaService = new OllamaService({ logger });
-    if (!ollamaService.isInstalled()) {
+    if (!ollama.isInstalled()) {
       logger.info("Ollama not found. Installing...");
-      await ollamaService.install();
+      await ollama.install();
       logger.info("Ollama installed.");
     } else {
       logger.info("Ollama found.");
     }
 
-    if (await ollamaService.isRunning()) {
+    if (await ollama.isRunning()) {
       logger.info("Ollama is already running.");
     } else {
       logger.info("Starting Ollama daemon...");
-      await ollamaService.start();
+      await ollama.start();
       logger.info("Ollama is running.");
     }
 
@@ -137,7 +149,7 @@ async function runSmokeTest(
       `Pulling chat model ${models.chat} (first run may take a while)...`,
     );
     let lastPercent = -1;
-    await ollamaService.pullModel(models.chat, (progress) => {
+    await ollama.pullModel(models.chat, (progress) => {
       if (progress.percent !== undefined && progress.percent !== lastPercent) {
         lastPercent = progress.percent;
         logger.info(
@@ -150,7 +162,7 @@ async function runSmokeTest(
     // 5. Send a test prompt and log the response.
     logger.info('Sending test prompt: "say hello"...');
     let response = "";
-    for await (const token of ollamaService.chat(
+    for await (const token of ollama.chat(
       [{ role: "user", content: "say hello" }],
       models.chat,
     )) {
@@ -163,5 +175,7 @@ async function runSmokeTest(
     void vscode.window.showErrorMessage(
       "LocalPilot smoke test failed — see the LocalPilot output channel for details.",
     );
+  } finally {
+    smokeTestInFlight = false;
   }
 }
