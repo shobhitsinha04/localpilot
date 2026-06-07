@@ -2,20 +2,26 @@ import * as vscode from "vscode";
 
 import { ConfigManager } from "./services/configManager";
 import { HardwareDetector, modelsForTier } from "./services/hardwareDetector";
+import { IndexManager } from "./services/indexManager";
 import { OllamaService } from "./services/ollamaService";
 import type { Logger } from "./types";
 
-// Phase 1 — Ollama Integration + Hardware Detection (PHASES.md).
+// Phase 1 — Ollama Integration + Hardware Detection, then
+// Phase 2 — Codebase Indexing (PHASES.md).
 //
 // On activation the extension runs a developer smoke test (not user-facing yet):
 // detect hardware -> pick tier/models -> install/start Ollama -> pull the chat
-// model -> send "say hello" -> log the response to the Output Channel. There is
-// no observability proxy in v1 (Helicone deferred — DECISIONS 011); the Ollama
+// model -> send "say hello" -> [Phase 2] pull the embedding model -> index the
+// workspace into LanceDB -> run a test query -> register a watcher for
+// incremental updates. All progress goes to the Output Channel. There is no
+// observability proxy in v1 (Helicone deferred — DECISIONS 011); the Ollama
 // Service talks to Ollama directly.
 
 let ollamaService: OllamaService | undefined;
 /** Guards against overlapping smoke-test runs (activation + manual command). */
 let smokeTestInFlight = false;
+/** Set once the incremental-index file watcher has been registered. */
+let indexWatcherRegistered = false;
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("LocalPilot");
@@ -170,6 +176,15 @@ async function runSmokeTest(
     }
     logger.info(`Model response: ${response.trim()}`);
     logger.info("Phase 1 smoke test complete. ✓");
+
+    // 6. Phase 2 — index the workspace and run a test query.
+    await runIndexingSmokeTest(
+      context,
+      logger,
+      config,
+      ollama,
+      models.embedding,
+    );
   } catch (err) {
     logger.error("Phase 1 smoke test failed", err);
     void vscode.window.showErrorMessage(
@@ -178,4 +193,115 @@ async function runSmokeTest(
   } finally {
     smokeTestInFlight = false;
   }
+}
+
+/**
+ * Developer smoke test for Phase 2 (Codebase Indexing). Pulls the embedding
+ * model, indexes the open workspace into LanceDB, logs the top retrieved chunks
+ * for a sample query, and registers a file watcher for incremental updates.
+ * Runs inside the Phase 1 try/catch — it may throw; the caller logs.
+ */
+async function runIndexingSmokeTest(
+  context: vscode.ExtensionContext,
+  logger: Logger,
+  config: ConfigManager,
+  ollama: OllamaService,
+  embeddingModel: string,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    logger.warn("No workspace folder open; skipping the indexing smoke test.");
+    return;
+  }
+
+  logger.info(`Pulling embedding model ${embeddingModel}...`);
+  let lastPercent = -1;
+  await ollama.pullModel(embeddingModel, (progress) => {
+    if (progress.percent !== undefined && progress.percent !== lastPercent) {
+      lastPercent = progress.percent;
+      logger.info(
+        `  ${embeddingModel}: ${progress.status} ${progress.percent}%`,
+      );
+    }
+  });
+  logger.info(`Embedding model ready: ${embeddingModel}`);
+
+  const indexManager = new IndexManager({
+    ollama,
+    storageDir: context.globalStorageUri.fsPath,
+    workspacePath: folder.uri.fsPath,
+    embeddingModel,
+    logger,
+  });
+
+  logger.info(`Indexing workspace ${folder.uri.fsPath}...`);
+  const stats = await indexManager.indexWorkspace((progress) => {
+    if (progress.current === progress.total || progress.current % 10 === 0) {
+      logger.info(`  indexed ${progress.current}/${progress.total} files`);
+    }
+  });
+  logger.info(
+    `Indexed ${stats.fileCount} files into ${stats.chunkCount} chunks.`,
+  );
+
+  // Record index state in config.json (workspaceIndexes keyed by hash).
+  await config.update({
+    workspaceIndexes: {
+      ...config.get().workspaceIndexes,
+      [stats.workspaceHash]: {
+        indexed: true,
+        fileCount: stats.fileCount,
+        workspaceHash: stats.workspaceHash,
+      },
+    },
+  });
+
+  // Run a sample query and log the top hits.
+  const query = "what colors were used for the links ";
+  const hits = await indexManager.search(query);
+  logger.info(`Top ${Math.min(3, hits.length)} chunks for "${query}":`);
+  hits.slice(0, 3).forEach((hit, i) => {
+    const rel = vscode.workspace.asRelativePath(hit.filename);
+    logger.info(
+      `  ${i + 1}. ${rel}:${hit.startLine}-${hit.endLine} ` +
+        `(score ${hit.score.toFixed(3)}, sim ${hit.similarity.toFixed(3)})`,
+    );
+  });
+
+  registerIndexWatcher(context, logger, indexManager);
+  logger.info("Phase 2 indexing smoke test complete. ✓");
+}
+
+/**
+ * Wire VS Code's file watcher to incremental index updates (DATA_FLOW.md §6).
+ * Registered once per session; lives here (not in IndexManager) so the service
+ * stays free of the `vscode` API.
+ */
+function registerIndexWatcher(
+  context: vscode.ExtensionContext,
+  logger: Logger,
+  indexManager: IndexManager,
+): void {
+  if (indexWatcherRegistered) return;
+  indexWatcherRegistered = true;
+
+  const watcher = vscode.workspace.createFileSystemWatcher("**/*");
+  const update = (uri: vscode.Uri): void => {
+    void indexManager
+      .updateFile(uri.fsPath)
+      .catch((err) =>
+        logger.warn(`Index update failed for ${uri.fsPath}: ${String(err)}`),
+      );
+  };
+  watcher.onDidCreate(update);
+  watcher.onDidChange(update);
+  watcher.onDidDelete((uri) => {
+    void indexManager
+      .deleteFile(uri.fsPath)
+      .catch((err) =>
+        logger.warn(`Index delete failed for ${uri.fsPath}: ${String(err)}`),
+      );
+  });
+  context.subscriptions.push(watcher);
+  logger.info("File watcher registered for incremental index updates.");
 }

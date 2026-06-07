@@ -58,6 +58,49 @@ export interface LocalPilotConfig {
   workspaceIndexes: Record<string, WorkspaceIndexState>;
 }
 
+// ----------------------------------------------------------------------------
+// Codebase indexing (PHASES.md Phase 2 / DATA_FLOW.md §5–6)
+// ----------------------------------------------------------------------------
+
+/** A contiguous slice of a source file produced by the Chunker. */
+export interface CodeChunk {
+  /** Absolute path of the source file (canonical key for delete/update). */
+  filename: string;
+  /** 1-based first line of the slice (inclusive). */
+  startLine: number;
+  /** 1-based last line of the slice (inclusive). */
+  endLine: number;
+  /** The slice text. */
+  text: string;
+}
+
+/** A chunk retrieved from the index, with its rerank scoring (0–1 each). */
+export interface RetrievedChunk extends CodeChunk {
+  /** Vector similarity derived from LanceDB distance (1 = closest). */
+  similarity: number;
+  /** Recency score from the file's mtime (1 = just modified). */
+  recency: number;
+  /** Combined rerank score: 0.7×similarity + 0.3×recency (DATA_FLOW §4). */
+  score: number;
+}
+
+/** Progress emitted while indexing a workspace. */
+export interface IndexProgress {
+  /** Files processed so far (1-based). */
+  current: number;
+  /** Total files to process. */
+  total: number;
+  /** The file currently being processed, when known. */
+  filename?: string;
+}
+
+/** Summary returned by IndexManager.indexWorkspace(). */
+export interface IndexStats {
+  fileCount: number;
+  chunkCount: number;
+  workspaceHash: string;
+}
+
 /** Minimal logging surface so services don't depend on vscode.OutputChannel. */
 export interface Logger {
   info(message: string): void;

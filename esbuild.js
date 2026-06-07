@@ -5,6 +5,12 @@
 // The `vscode` module is provided by the extension host at runtime and must
 // never be bundled, so it is marked external.
 //
+// `@lancedb/lancedb` is a native module (ships a platform-specific .node binary
+// that esbuild cannot inline), so it is also external — its require() is left to
+// resolve from node_modules at runtime. NOTE (Phase 7 packaging): the LanceDB
+// package and its platform binary must be kept in the published .vsix
+// (i.e. not excluded by .vscodeignore).
+//
 // TECH_STACK.md: esbuild is used instead of webpack — faster, simpler config,
 // same approach as Continue.dev.
 
@@ -18,7 +24,7 @@ const buildOptions = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   outfile: "dist/extension.js",
-  external: ["vscode"],
+  external: ["vscode", "@lancedb/lancedb"],
   format: "cjs",
   platform: "node",
   // VS Code extension host requires CommonJS targeting Node 18 LTS (TECH_STACK.md).
