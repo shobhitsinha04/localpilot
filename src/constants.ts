@@ -83,3 +83,124 @@ export const OLLAMA_START_RETRY_DELAY_MS = 2000;
 // are cheap.
 export const OLLAMA_PULL_MAX_ATTEMPTS = 3;
 export const OLLAMA_PULL_RETRY_DELAY_MS = 2000;
+
+// ----------------------------------------------------------------------------
+// Codebase indexing (PHASES.md Phase 2 / DATA_FLOW.md §5–6)
+// ----------------------------------------------------------------------------
+
+/** Chunk window size and overlap, in lines (DATA_FLOW.md §5). */
+export const CHUNK_SIZE_LINES = 150;
+export const CHUNK_OVERLAP_LINES = 20;
+
+/** Files larger than this are skipped during indexing (DATA_FLOW.md §5). */
+export const MAX_INDEXABLE_FILE_BYTES = 500 * 1024;
+
+/** Bytes sniffed from the head of a file for a null-byte binary check. */
+export const NULL_BYTE_SNIFF_BYTES = 8192;
+
+/**
+ * Files are embedded in batches of this many — concurrent enough to be fast,
+ * bounded enough not to overwhelm Ollama (DATA_FLOW.md §5 "batches of 5").
+ */
+export const INDEX_FILE_BATCH_SIZE = 5;
+
+/**
+ * Max characters sent to the embedding model per chunk. nomic-embed-text has a
+ * ~2048-token context; a dense 150-line chunk can exceed it and return HTTP 500
+ * ("input length exceeds the context length"). We embed a bounded prefix while
+ * still storing the full chunk text for later prompt assembly. Builder decision
+ * (found via the live indexing harness) — keeps DATA_FLOW's 150-line chunk
+ * geometry intact for citations. 4000 chars sits safely under the model's limit
+ * for even dense code (empirically ~4500 chars is the breaking point).
+ */
+export const EMBED_MAX_CHARS = 4000;
+
+/** Vector search returns this many candidates before reranking (DATA_FLOW §4). */
+export const SEARCH_TOP_K = 20;
+/** Rerank narrows candidates down to this many chunks (DATA_FLOW §4). */
+export const RERANK_TOP_K = 8;
+
+/** Rerank score weights: 0.7×similarity + 0.3×recency (DATA_FLOW.md §4). */
+export const RERANK_SIMILARITY_WEIGHT = 0.7;
+export const RERANK_RECENCY_WEIGHT = 0.3;
+
+/**
+ * Half-life for the recency component of the rerank score. A file edited this
+ * long ago scores 0.5; the score decays exponentially with age. "Recency" is
+ * unspecified in DATA_FLOW.md — this exponential-decay reading is a Builder
+ * decision (default 30 days), reversible without touching call sites.
+ */
+export const RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Directories never descended into during indexing (DATA_FLOW.md §5). */
+export const SKIP_DIRS: ReadonlySet<string> = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "__pycache__",
+]);
+
+/** Extensions treated as binary (skipped) without a content sniff. */
+export const BINARY_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+  // images
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".bmp",
+  ".ico",
+  ".webp",
+  ".tiff",
+  ".svg",
+  // fonts
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".eot",
+  // archives
+  ".zip",
+  ".gz",
+  ".tar",
+  ".tgz",
+  ".rar",
+  ".7z",
+  ".bz2",
+  ".xz",
+  // media
+  ".mp3",
+  ".mp4",
+  ".mov",
+  ".avi",
+  ".mkv",
+  ".wav",
+  ".flac",
+  ".webm",
+  // documents / binaries
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".exe",
+  ".dll",
+  ".so",
+  ".dylib",
+  ".bin",
+  ".o",
+  ".a",
+  ".class",
+  ".wasm",
+  ".node",
+  ".pyc",
+  ".pdb",
+  // data blobs
+  ".lock",
+  ".lockb",
+  ".db",
+  ".sqlite",
+  ".sqlite3",
+]);

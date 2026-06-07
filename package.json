@@ -53,6 +53,7 @@
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "@types/node": "^18.19.0",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.24.0",
     "eslint": "^9.13.0",
@@ -61,5 +62,10 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.13.0",
     "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.30.0",
+    "ignore": "^7.0.5",
+    "proper-lockfile": "^4.1.2"
   }
 }
