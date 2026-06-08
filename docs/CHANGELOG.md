@@ -9,6 +9,101 @@ the current state of the codebase before writing any new code.
 
 ---
 
+## Phase 3 — Sidebar Chat
+**Status:** Approved by Judge Agent
+**Judge Score:** 27/30 (see JUDGE_SCORES.md)
+
+### What Was Built
+
+A working chat panel in the VS Code primary sidebar (FEATURES.md §3, UI_UX.md,
+DATA_FLOW.md §3). Streaming responses, the current file as automatic context,
+multi-turn session memory, Stop / New Chat, markdown + syntax highlighting, and
+inline error states. `@codebase` retrieval and the onboarding UI remain deferred
+to Phase 6.
+
+`ConversationManager` (src/services/conversationManager.ts): in-memory
+user/assistant transcript for the session — `addUser`/`addAssistant`,
+`getHistory` (defensive copy), `clear`. Not persisted to disk.
+
+`PromptEngine` (src/services/promptEngine.ts): `buildChatPrompt(userMessage,
+history, fileContext?)` assembles the Ollama message array — system prompt with
+the current file silently injected, the trimmed history, then the user message.
+Trims to the most recent `MAX_HISTORY_MESSAGES` (20 ≈ 10 exchanges). `chatOptions()`
+returns the DATA_FLOW §3 sampling options (temperature 0.7, top_p 0.95). Pure
+and `vscode`-free.
+
+`webviewProtocol.ts`: the typed postMessage contract between the webview and the
+extension host (`WebviewMessage` / `HostMessage` discriminated unions) plus
+`parseWebviewMessage`, a validating parser that rejects malformed input.
+
+`ChatViewProvider` (src/chatViewProvider.ts): the `WebviewViewProvider`. Gathers
+active-editor context (filename, language, contents if ≤500 lines, cursor +
+selection), assembles the prompt, streams `OllamaService.chat()` tokens to the
+webview, supports Stop via `AbortController`, and maps failures to FEATURES §3's
+inline error states (not running → Restart; model not ready → Retry; timeout;
+empty). Builds the webview HTML with a CSP and per-load nonce. Tracks the last
+active editor so file context survives the chat input being focused.
+
+Webview (src/webview/main.ts → bundled to media/webview.js; media/webview.css;
+media/icon.svg): plain HTML/CSS/vanilla JS (DECISIONS 009). Renders markdown
+with marked (raw HTML neutralised) and highlights code with highlight.js; live
+streaming cursor, per-code-block language label + copy button, clickable
+empty-state prompts, and inline (non-toast) error rows. All colours come from VS
+Code theme variables except the accent and the syntax-token palette. Bundled via
+a second esbuild entry (browser/IIFE).
+
+`OllamaService.chat()` gained an optional `AbortSignal` (Stop) and a
+time-to-first-token timeout (so a long-streaming reply isn't cut off mid-stream).
+`extension.ts` registers the provider with `retainContextWhenHidden` and forwards
+active-editor changes. 96 Vitest tests (ConversationManager, PromptEngine, the
+protocol parser).
+
+### Implementation Decisions
+
+- **Webview HTML is generated in the provider** (with the CSP nonce injected),
+  not a separate template file — simplest nonce handling.
+- **XSS defenses:** a CSP with `script-src 'nonce-…'` plus marked configured to
+  escape raw HTML; model output is rendered as markdown only.
+- **Separate `tsconfig.webview.json`** (lib DOM, `types: []`) so the browser
+  webview type-checks without colliding with `@types/node`'s fetch types; the
+  main config excludes `src/webview`.
+- **Timeout is time-to-first-token, not total** request time (a streaming chat
+  reply can legitimately run long); the surfaced message matches FEATURES §3.
+- **Syntax-token colours are hardcoded** in webview.css (documented) because VS
+  Code does not expose per-token editor theme colours to webviews.
+
+### Judge Findings Addressed
+
+Approved 27/30, no Critical findings. Two Minor findings fixed before close:
+(1) an immediate Stop (before any token) posted a spurious "No response received"
+error — it now ends quietly and the empty bubble is dropped; (2) "model not
+loaded" is now a distinct inline error with a working Retry action (a pre-send
+`hasModel()` check). The third Minor finding — token/context-window trimming
+(only message-count trimming exists today) — is deferred to Phase 6, when
+`@codebase` introduces the larger contexts that need it.
+
+### Known Issues
+
+Tracked as Linear issues (Linear is external to this repo — log there):
+- Token-based context-window trimming and file-content truncation are not yet
+  implemented (PromptEngine trims by message count only). Add before Phase 6.
+- A failed send (e.g. Ollama not running) shows the user bubble in the UI but
+  does not record it in `ConversationManager` history — a minor UI/state
+  divergence on the error path.
+
+No critical issues.
+
+### Current State
+
+Opening the LocalPilot sidebar shows a chat panel that streams model responses
+with the current file as automatic context, renders markdown with syntax-
+highlighted, copyable code blocks, supports Stop and New Chat, retains history
+across activity-bar switches, and surfaces failures inline. The webview is
+manual-tested (per TECH_STACK.md). Not yet built: inline completions (Phase 4),
+CMD+K editing (Phase 5), and `@codebase` + the onboarding UI (Phase 6).
+
+---
+
 ## Phase 2 — Codebase Indexing
 **Status:** Approved by Judge Agent
 **Judge Score:** 28/30 (see JUDGE_SCORES.md)
