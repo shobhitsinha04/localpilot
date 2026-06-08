@@ -26,6 +26,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   /** Abort handle for the in-flight chat request (Stop button). */
   private currentRequest?: AbortController;
+  /** The last message the user sent, re-sent by the "Retry" error action. */
+  private pendingMessage?: string;
   /**
    * The most recent text editor the user worked in. Tracked because focusing
    * the chat webview clears `window.activeTextEditor`, which would otherwise
@@ -77,6 +79,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case "restart":
           void this.restartOllama();
           break;
+        case "retry":
+          if (this.pendingMessage)
+            void this.handleUserMessage(this.pendingMessage);
+          break;
       }
     });
   }
@@ -88,6 +94,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleUserMessage(text: string): Promise<void> {
+    // Remembered so the "Retry" action on an error can re-send this message.
+    this.pendingMessage = text;
     const model = this.config.get().chatModel;
     if (!model) {
       this.postError("LocalPilot isn't set up yet. Run setup and try again.");
@@ -95,6 +103,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     if (!(await this.ollama.isRunning())) {
       this.postError("LocalPilot isn't running.", "restart");
+      return;
+    }
+    if (!(await this.ollama.hasModel(model))) {
+      this.postError(
+        `The chat model (${model}) isn't ready yet — it may still be downloading.`,
+        "retry",
+      );
       return;
     }
 
@@ -108,27 +123,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.conversation.addUser(text);
 
     this.post({ type: "streamStart" });
-    this.currentRequest = new AbortController();
+    const request = new AbortController();
+    this.currentRequest = request;
     let full = "";
     try {
       for await (const token of this.ollama.chat(
         messages,
         model,
         this.prompt.chatOptions(),
-        this.currentRequest.signal,
+        request.signal,
       )) {
         full += token;
         this.post({ type: "streamToken", token });
       }
-      if (full.trim().length === 0) {
-        // The model produced nothing (and it wasn't a Stop with partial text).
+      if (full.trim().length > 0) {
+        this.post({ type: "streamEnd" });
+        this.conversation.addAssistant(full);
+      } else if (request.signal.aborted) {
+        // User pressed Stop before any token arrived — end quietly (the webview
+        // drops the empty bubble); not an error.
+        this.post({ type: "streamEnd" });
+      } else {
         this.post({
           type: "error",
           message: "No response received. Try again.",
         });
-      } else {
-        this.post({ type: "streamEnd" });
-        this.conversation.addAssistant(full);
       }
     } catch (err) {
       this.logger.error("Chat request failed", err);

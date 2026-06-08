@@ -4,7 +4,7 @@
 // unit-testable (PHASES.md Phase 3 "unit test message passing protocol").
 
 /** Actionable button attached to an inline error (UI_UX.md "Error Messages"). */
-export type ErrorAction = "restart";
+export type ErrorAction = "restart" | "retry";
 
 /** Messages the webview sends to the extension host. */
 export type WebviewMessage =
@@ -12,7 +12,8 @@ export type WebviewMessage =
   | { type: "sendMessage"; text: string }
   | { type: "stop" }
   | { type: "newChat" }
-  | { type: "restart" };
+  | { type: "restart" }
+  | { type: "retry" };
 
 /** Messages the extension host sends to the webview. */
 export type HostMessage =
@@ -35,6 +36,7 @@ export function parseWebviewMessage(raw: unknown): WebviewMessage | null {
     case "stop":
     case "newChat":
     case "restart":
+    case "retry":
       return { type: m.type };
     case "sendMessage":
       return typeof m.text === "string" && m.text.trim().length > 0

@@ -12,6 +12,9 @@ describe("parseWebviewMessage", () => {
     expect(parseWebviewMessage({ type: "restart" })).toEqual({
       type: "restart",
     });
+    expect(parseWebviewMessage({ type: "retry" })).toEqual({
+      type: "retry",
+    });
   });
 
   it("accepts sendMessage with non-empty text", () => {

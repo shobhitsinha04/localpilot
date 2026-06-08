@@ -9,7 +9,11 @@
 import hljs from "highlight.js/lib/common";
 import { Marked } from "marked";
 
-import type { HostMessage, WebviewMessage } from "../webviewProtocol";
+import type {
+  ErrorAction,
+  HostMessage,
+  WebviewMessage,
+} from "../webviewProtocol";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -113,9 +117,15 @@ function scheduleRender(): void {
 
 function finishAssistantBubble(): void {
   if (assistantEl) {
-    assistantEl.classList.remove("streaming");
-    assistantEl.innerHTML = renderMarkdown(assistantBuffer);
-    enhanceCodeBlocks(assistantEl);
+    if (assistantBuffer.trim().length === 0) {
+      // Nothing was generated (e.g. Stop pressed before the first token) —
+      // remove the placeholder bubble rather than leaving it blank.
+      assistantEl.remove();
+    } else {
+      assistantEl.classList.remove("streaming");
+      assistantEl.innerHTML = renderMarkdown(assistantBuffer);
+      enhanceCodeBlocks(assistantEl);
+    }
   }
   assistantEl = null;
   assistantBuffer = "";
@@ -160,18 +170,18 @@ function enhanceCodeBlocks(container: HTMLElement): void {
   });
 }
 
-function addErrorRow(message: string, action?: "restart"): void {
+function addErrorRow(message: string, action?: ErrorAction): void {
   const row = document.createElement("div");
   row.className = "msg-error";
   const text = document.createElement("span");
   text.textContent = `⚠ ${message}`;
   row.appendChild(text);
-  if (action === "restart") {
+  if (action) {
     const btn = document.createElement("button");
     btn.className = "error-action";
-    btn.textContent = "Restart";
+    btn.textContent = action === "restart" ? "Restart" : "Retry";
     btn.addEventListener("click", () => {
-      post({ type: "restart" });
+      post({ type: action });
       row.remove();
     });
     row.appendChild(btn);
