@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import * as path from "node:path";
 
 import {
+  CHAT_FIRST_TOKEN_TIMEOUT_MS,
   OLLAMA_BINARY_PATHS,
   OLLAMA_DEFAULT_BASE_URL,
   OLLAMA_INSTALL_SCRIPT_URL,
@@ -289,27 +290,72 @@ export class OllamaService {
    * Chat completion (POST /api/chat, streamed). Yields token strings as they
    * arrive. Prompt assembly belongs to the Prompt Engine — this method only
    * transports an already-assembled message array.
+   *
+   * Cancellation: pass an `AbortSignal` (e.g. from the chat UI's Stop button)
+   * to end generation early — the generator simply stops yielding. Timeout:
+   * unlike a one-shot completion, a chat reply can legitimately stream for a
+   * long time, so the timeout is a *time-to-first-token* budget — it aborts
+   * only if no response has begun. Once tokens flow, streaming continues until
+   * `done` or the caller aborts.
    */
   async *chat(
     messages: ChatMessage[],
     model: string,
     options?: OllamaRequestOptions,
+    signal?: AbortSignal,
   ): AsyncGenerator<string> {
-    const res = await this.fetchWithTimeout(
-      `${this.baseUrl}/api/chat`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages, stream: true, options }),
-      },
-      OLLAMA_REQUEST_TIMEOUT_MS,
-    );
-    if (!res.ok || !res.body) {
-      throw new OllamaError(
-        `Ollama /api/chat returned ${res.status} ${res.statusText}`,
-      );
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    if (signal) {
+      if (signal.aborted) return;
+      signal.addEventListener("abort", abortFromCaller, { once: true });
     }
-    yield* this.streamTokens(res.body, "chat");
+
+    // First-token watchdog: aborts the request if headers never arrive. Cleared
+    // as soon as the response starts, so it never cuts off an active stream.
+    let timedOut = false;
+    const firstTokenTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CHAT_FIRST_TOKEN_TIMEOUT_MS);
+
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`${this.baseUrl}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, messages, stream: true, options }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (timedOut) {
+          throw new OllamaError(
+            `Ollama did not start responding within ${CHAT_FIRST_TOKEN_TIMEOUT_MS}ms.`,
+          );
+        }
+        if (signal?.aborted) return; // Stopped before the response began.
+        throw err;
+      } finally {
+        clearTimeout(firstTokenTimer);
+      }
+
+      if (!res.ok || !res.body) {
+        throw new OllamaError(
+          `Ollama /api/chat returned ${res.status} ${res.statusText}`,
+        );
+      }
+
+      try {
+        yield* this.streamTokens(res.body, "chat");
+      } catch (err) {
+        // An abort mid-stream (Stop pressed) is normal termination, not an error.
+        if (controller.signal.aborted) return;
+        throw err;
+      }
+    } finally {
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
   }
 
   /** Single-shot completion (POST /api/generate, not streamed). */

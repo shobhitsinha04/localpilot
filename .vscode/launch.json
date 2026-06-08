@@ -5,7 +5,11 @@
       "name": "Run LocalPilot Extension",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--disable-extensions",
+        "${workspaceFolder}"
+      ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "npm: build"
     }

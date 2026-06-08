@@ -11,7 +11,14 @@ import prettier from "eslint-config-prettier";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "*.config.mjs", "esbuild.js"],
+    ignores: [
+      "dist/**",
+      "media/webview.js",
+      "media/webview.js.map",
+      "node_modules/**",
+      "*.config.mjs",
+      "esbuild.js",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

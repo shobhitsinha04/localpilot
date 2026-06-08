@@ -204,3 +204,38 @@ export const BINARY_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".sqlite",
   ".sqlite3",
 ]);
+
+// ----------------------------------------------------------------------------
+// Sidebar chat (PHASES.md Phase 3 / FEATURES.md §3 / DATA_FLOW.md §3)
+// ----------------------------------------------------------------------------
+
+/** System prompt for sidebar chat without @codebase (DATA_FLOW.md §3). */
+export const CHAT_SYSTEM_PROMPT =
+  "You are a coding assistant. You have access to the user's current file. " +
+  "Answer concisely and accurately.";
+
+/** Chat sampling options (DATA_FLOW.md §3: temperature 0.7, top_p 0.95). */
+export const CHAT_TEMPERATURE = 0.7;
+export const CHAT_TOP_P = 0.95;
+
+/**
+ * The active file's contents are injected into the prompt only when the file is
+ * at most this many lines (FEATURES.md §3 "if under 500 lines").
+ */
+export const MAX_CONTEXT_FILE_LINES = 500;
+
+/**
+ * History trimming for what is *sent to the model* (DATA_FLOW.md "Context
+ * Window Management": keep the last ~10 exchanges). Counts individual messages,
+ * so 20 ≈ 10 user+assistant exchanges. The full history always stays visible in
+ * the UI; only the prompt is trimmed, oldest-first.
+ */
+export const MAX_HISTORY_MESSAGES = 20;
+
+/**
+ * Time-to-first-token budget for a chat request. Unlike completions, a chat
+ * response can legitimately stream for a long time, so this aborts only when no
+ * response has *started*; once tokens flow, streaming continues until done or
+ * the user presses Stop (FEATURES.md §3 timeout state).
+ */
+export const CHAT_FIRST_TOKEN_TIMEOUT_MS = 30_000;

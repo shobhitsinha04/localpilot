@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 *.vsix
+# Generated webview bundle (built from src/webview by esbuild)
+media/webview.js
+media/webview.js.map
 
 # Logs
 *.log

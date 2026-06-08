@@ -19,8 +19,9 @@ const esbuild = require("esbuild");
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
 
+/** The extension host bundle (Node/CommonJS). */
 /** @type {import('esbuild').BuildOptions} */
-const buildOptions = {
+const extensionOptions = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   outfile: "dist/extension.js",
@@ -34,14 +35,38 @@ const buildOptions = {
   logLevel: "info",
 };
 
+/**
+ * The sidebar chat webview bundle (browser/IIFE). Runs inside the sandboxed
+ * webview iframe, so it targets the browser and bundles marked + highlight.js
+ * in (DECISIONS 009: plain JS in the webview, no framework).
+ */
+/** @type {import('esbuild').BuildOptions} */
+const webviewOptions = {
+  entryPoints: ["src/webview/main.ts"],
+  bundle: true,
+  outfile: "media/webview.js",
+  format: "iife",
+  platform: "browser",
+  target: "es2020",
+  sourcemap: !production,
+  minify: production,
+  logLevel: "info",
+};
+
 async function main() {
   if (watch) {
-    const ctx = await esbuild.context(buildOptions);
-    await ctx.watch();
+    const ctxExt = await esbuild.context(extensionOptions);
+    const ctxWeb = await esbuild.context(webviewOptions);
+    await Promise.all([ctxExt.watch(), ctxWeb.watch()]);
     console.log("[esbuild] watching for changes...");
   } else {
-    await esbuild.build(buildOptions);
-    console.log("[esbuild] build complete -> dist/extension.js");
+    await Promise.all([
+      esbuild.build(extensionOptions),
+      esbuild.build(webviewOptions),
+    ]);
+    console.log(
+      "[esbuild] build complete -> dist/extension.js, media/webview.js",
+    );
   }
 }
 

@@ -1,0 +1,382 @@
+/* Sidebar chat styles (UI_UX.md). Every colour is a VS Code theme variable so
+   the panel adapts to any theme; the only literal colour is the LocalPilot
+   accent, and the syntax-token palette at the bottom (VS Code does not expose
+   per-token theme colours to webviews). Spacing is in 4/8px multiples. */
+
+:root {
+  --localpilot-accent: #7c6af7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+/* ---- Header ---- */
+.header {
+  flex: 0 0 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.header-titles {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  overflow: hidden;
+}
+
+.wordmark {
+  font-weight: 600;
+}
+
+.model-name {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.icon-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Conversation ---- */
+.conversation {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty-state {
+  margin: auto;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 12px;
+}
+
+.empty-logo {
+  color: var(--localpilot-accent);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.empty-sub {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.try-chip {
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.try-chip:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+/* ---- Messages ---- */
+.msg {
+  animation: appear 150ms ease-in;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-user {
+  align-self: flex-end;
+  max-width: 85%;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 8px 8px 4px 8px;
+  background: var(--vscode-input-background);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg-assistant {
+  align-self: stretch;
+  /* min-width:0 lets this flex item shrink below its content width so a long
+     line in a code block scrolls inside the block (overflow-x:auto) instead of
+     widening the whole panel. */
+  min-width: 0;
+  padding: 4px 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.msg-assistant p {
+  margin: 0 0 8px;
+}
+
+.msg-assistant :not(pre) > code {
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+.msg-assistant pre {
+  position: relative;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.msg-assistant pre code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  white-space: pre;
+}
+
+.code-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.has-toolbar:hover .code-toolbar {
+  opacity: 1;
+}
+
+.code-lang {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.code-copy {
+  font: inherit;
+  font-size: 11px;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(
+    --vscode-button-secondaryBackground,
+    rgba(128, 128, 128, 0.2)
+  );
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  cursor: pointer;
+}
+
+/* Streaming cursor */
+.cursor {
+  display: inline-block;
+  width: 6px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--vscode-foreground);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Inline errors (never red — system state, not user error) */
+.msg-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vscode-editorWarning-foreground);
+  font-size: 13px;
+}
+
+.error-action {
+  font: inherit;
+  border: 1px solid var(--vscode-editorWarning-foreground);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-editorWarning-foreground);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+/* ---- Input ---- */
+.input-area {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-input-background);
+}
+
+#input {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.5;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+#input:disabled {
+  opacity: 0.5;
+}
+
+.input-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.send-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--localpilot-accent);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.send-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+.send-btn:disabled {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.send-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Send icon shown by default; stop icon shown while generating. */
+.send-btn .icon-stop {
+  display: none;
+}
+
+.send-btn.stop .icon-send {
+  display: none;
+}
+
+.send-btn.stop .icon-stop {
+  display: block;
+  color: var(--vscode-foreground);
+}
+
+/* ---- Syntax tokens (highlight.js) ----
+   The one place colours are defined rather than inherited: VS Code does not
+   expose per-token editor theme colours to webviews. A restrained palette that
+   reads well on both light and dark themes. */
+.hljs-comment,
+.hljs-quote {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in {
+  color: var(--localpilot-accent);
+}
+.hljs-string,
+.hljs-attr {
+  color: #4caf91;
+}
+.hljs-number,
+.hljs-literal {
+  color: #d19a66;
+}
+.hljs-title,
+.hljs-function .hljs-title,
+.hljs-section {
+  color: #61afef;
+}
+.hljs-type,
+.hljs-class .hljs-title {
+  color: #e5c07b;
+}

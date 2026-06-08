@@ -1,0 +1,12 @@
+{
+  // The chat webview runs in a browser (sandboxed iframe), not Node. It needs
+  // the DOM lib and must NOT pull in @types/node (whose fetch/undici types
+  // collide with lib.dom). Kept separate from the main extension-host config.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["src/webview/**/*.ts", "src/webviewProtocol.ts"],
+  "exclude": ["node_modules", "dist"]
+}

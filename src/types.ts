@@ -114,6 +114,28 @@ export interface ChatMessage {
   content: string;
 }
 
+// ----------------------------------------------------------------------------
+// Sidebar chat (PHASES.md Phase 3 / FEATURES.md §3 / DATA_FLOW.md §3)
+// ----------------------------------------------------------------------------
+
+/**
+ * Automatic context about the user's active editor, injected silently into the
+ * chat prompt (FEATURES.md §3 "Automatic Context"). Gathered by the chat view
+ * provider; consumed by the PromptEngine.
+ */
+export interface FileContext {
+  /** Path of the active file, workspace-relative for display. */
+  filename: string;
+  /** VS Code language identifier, e.g. "typescript". */
+  languageId: string;
+  /** File contents, omitted when the file exceeds the line limit. */
+  content?: string;
+  /** 1-based cursor line, when an editor is focused. */
+  cursorLine?: number;
+  /** Currently selected text, if any. */
+  selectedText?: string;
+}
+
 /** Ollama sampling options (passed through to /api/chat and /api/generate). */
 export interface OllamaRequestOptions {
   temperature?: number;

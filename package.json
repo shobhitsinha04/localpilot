@@ -28,6 +28,24 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "localpilot",
+          "title": "LocalPilot",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "localpilot": [
+        {
+          "id": "localpilot.chatView",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "localpilot.helloWorld",
@@ -43,7 +61,7 @@
     "vscode:prepublish": "npm run build -- --production",
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -65,7 +83,9 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.30.0",
+    "highlight.js": "^11.11.1",
     "ignore": "^7.0.5",
+    "marked": "^18.0.5",
     "proper-lockfile": "^4.1.2"
   }
 }

@@ -19,5 +19,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "esbuild.js", "vitest.config.ts"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/webview"]
 }

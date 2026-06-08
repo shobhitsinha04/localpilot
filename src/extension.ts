@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 
+import { ChatViewProvider } from "./chatViewProvider";
 import { ConfigManager } from "./services/configManager";
 import { HardwareDetector, modelsForTier } from "./services/hardwareDetector";
 import { IndexManager } from "./services/indexManager";
@@ -40,6 +41,29 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("localpilot.runSmokeTest", () => {
       void runSmokeTest(context, logger, channel, ollama);
     }),
+  );
+
+  // Phase 3 — register the sidebar chat panel (FEATURES.md §3).
+  const chatConfig = new ConfigManager(context.globalStorageUri.fsPath, logger);
+  const chatProvider = new ChatViewProvider(
+    context.extensionUri,
+    ollama,
+    chatConfig,
+    logger,
+  );
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ChatViewProvider.viewType,
+      chatProvider,
+      // Keep the webview (and its conversation) alive when the user switches to
+      // another activity-bar view, so chat history isn't lost (FEATURES.md §3).
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
+    // Track the active editor so chat keeps the current-file context even while
+    // the chat input is focused (which clears window.activeTextEditor).
+    vscode.window.onDidChangeActiveTextEditor((editor) =>
+      chatProvider.noteActiveEditor(editor),
+    ),
   );
 
   // Fire-and-forget so a long model pull never blocks VS Code activation.
