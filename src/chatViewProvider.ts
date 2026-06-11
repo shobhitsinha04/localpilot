@@ -74,6 +74,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.currentRequest?.abort();
           break;
         case "newChat":
+          // The webview confirms (in-panel) before sending this, so by the time
+          // it arrives the user has agreed to clear the conversation.
           this.conversation.clear();
           break;
         case "restart":

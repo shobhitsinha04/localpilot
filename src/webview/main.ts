@@ -244,7 +244,18 @@ sendBtn.addEventListener("click", () => {
   }
 });
 
+// New Chat clears the transcript, which can't be undone — so confirm first with
+// an in-panel dialog (kept inside the chat UI rather than a VS Code system
+// dialog). An already-empty chat just resets without prompting.
 newChatBtn.addEventListener("click", () => {
+  if (conversation.querySelector(".msg, .msg-error")) {
+    showNewChatConfirm();
+  } else {
+    clearChat();
+  }
+});
+
+function clearChat(): void {
   post({ type: "newChat" });
   conversation
     .querySelectorAll(".msg, .msg-error")
@@ -252,7 +263,66 @@ newChatBtn.addEventListener("click", () => {
   emptyState.style.display = "";
   assistantEl = null;
   assistantBuffer = "";
-});
+}
+
+// Build and show the in-panel "Start a new chat?" confirmation. Built from DOM
+// nodes (not innerHTML) so all text is inert and the CSP stays strict.
+function showNewChatConfirm(): void {
+  const backdrop = document.createElement("div");
+  backdrop.className = "confirm-backdrop";
+
+  const dialog = document.createElement("div");
+  dialog.className = "confirm-dialog";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+
+  const title = document.createElement("div");
+  title.className = "confirm-title";
+  title.textContent = "Start a new chat?";
+
+  const body = document.createElement("div");
+  body.className = "confirm-text";
+  body.textContent =
+    "This clears the current conversation. It can't be undone.";
+
+  const actions = document.createElement("div");
+  actions.className = "confirm-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "confirm-btn secondary";
+  cancelBtn.textContent = "Cancel";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.className = "confirm-btn primary";
+  confirmBtn.textContent = "New Chat";
+  actions.append(cancelBtn, confirmBtn);
+
+  dialog.append(title, body, actions);
+  backdrop.appendChild(dialog);
+
+  const close = (): void => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  function onKey(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+    }
+  }
+
+  cancelBtn.addEventListener("click", close);
+  confirmBtn.addEventListener("click", () => {
+    clearChat();
+    close();
+  });
+  // Click on the dimmed backdrop (outside the dialog) cancels.
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) close();
+  });
+  document.addEventListener("keydown", onKey);
+
+  document.body.appendChild(backdrop);
+  confirmBtn.focus();
+}
 
 // Clickable "Try" suggestions in the empty state populate the input.
 emptyState.querySelectorAll("[data-try]").forEach((el) => {
