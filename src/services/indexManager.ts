@@ -251,6 +251,11 @@ export class IndexManager {
     let mtimeMs: number;
     try {
       const info = await stat(file);
+      // The VS Code watcher fires create/change events for directories too,
+      // which arrive here via updateFile(). Only regular files are indexable;
+      // skip anything else silently so directory events don't trip readFile()
+      // with EISDIR (or follow a symlink to a directory).
+      if (!info.isFile()) return [];
       if (info.size > MAX_INDEXABLE_FILE_BYTES) return [];
       mtimeMs = info.mtimeMs;
       content = await readFile(file, "utf8");
