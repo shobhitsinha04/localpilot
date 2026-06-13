@@ -9,6 +9,103 @@ the current state of the codebase before writing any new code.
 
 ---
 
+## Phase 4 — Inline Completions
+**Status:** Approved by Judge Agent
+**Judge Score:** 28/30 (see JUDGE_SCORES.md)
+
+### What Was Built
+
+Tab-autocomplete: ghost-text completions appear when you pause typing, accepted
+with Tab and dismissed with Esc (FEATURES.md, DATA_FLOW.md §1). Powered by the
+Qwen2.5-Coder Fill-in-the-Middle (FIM) model over Ollama. Not a webview feature —
+it uses VS Code's inline completion API.
+
+`PromptEngine.buildFIMPrompt(prefix, suffix)` (src/services/promptEngine.ts):
+assembles the FIM prompt with Qwen's `<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`
+tokens. `completionOptions()` returns the DATA_FLOW §1 sampling (temperature 0.1,
+top_p 0.95, stop `["\n\n"]`). Pure and `vscode`-free.
+
+`cleanCompletion(raw, suffix)` (src/services/completionPostprocess.ts): defensive
+cleanup of small-model output — strips any echoed special tokens, unwraps stray
+markdown fences, and trims a tail that merely repeats the start of the suffix
+(so accepting a suggestion can't duplicate a bracket/line already after the
+cursor). Pure, returns "" when nothing usable remains.
+
+`OllamaService.complete()` (src/services/ollamaService.ts): now sends `raw: true`
+(so Ollama doesn't wrap the FIM tokens in the instruct chat template), accepts an
+`AbortSignal` + per-request timeout (abort/timeout resolve to "" rather than
+throwing), and an optional `keep_alive` to keep the model resident between
+requests.
+
+`CompletionProvider` (src/completionProvider.ts): the `InlineCompletionItemProvider`.
+600ms debounce that honours VS Code's `CancellationToken` (a newer keystroke
+supersedes the pending request); a single `AbortController` drives both
+supersession and the timeout; extracts 20 lines of prefix / 10 of suffix around
+the cursor → FIM prompt → `complete()` → post-process → `InlineCompletionItem`.
+Best-effort: any failure yields no suggestion, never a user-facing error.
+Per-request timing prints to the Output channel (`[completion] served in N ms`),
+and a status-bar spinner shows while a completion is generating.
+
+`extension.ts` registers the provider for a curated code-language allowlist
+(`COMPLETION_LANGUAGES`), ensures the configured autocomplete model is pulled
+(tier 3/4 use a model the earlier steps don't fetch), and pre-warms it so the
+first real completion isn't a cold load. A single `ConfigManager` is now shared
+across the chat panel, smoke test, and completion provider.
+
+**Autocomplete toggle:** a labelled on/off switch in the chat header (next to New
+Chat) flips inline completions live and persists via `inlineCompletionsEnabled`
+in config.json; the provider reads it on each request. **Chat typing indicator:**
+a three-dot animation now shows in the assistant bubble while awaiting the first
+token (replacing the bare cursor).
+
+113 Vitest tests (up from 96) cover FIM assembly, completion post-processing,
+the config default/back-fill, and the new protocol message.
+
+### Implementation Decisions
+
+- **Plain FIM, no filename** (`buildFIMPrompt(prefix, suffix)`): a live harness
+  showed a leading `<|file_sep|>` filename made the model emit stray markdown
+  fences; plain FIM is cleanest. PHASES.md's `(…, filename, language)` signature
+  was updated to match.
+- **`raw: true` is required** on `/api/generate`: without it Ollama applies the
+  instruct chat template and the model replies with prose instead of completing.
+- **Timeout 5s, not DATA_FLOW §1's 3s** (DECISIONS 013): a cold model load is
+  ~2.7s and a 3s budget aborted it silently; 5s covers cold loads while the warm
+  path (~0.3s) stays under the 2s DoD.
+- **`keep_alive` (30m) + activation pre-warm**: additions beyond §1 that target
+  the dominant cold-load latency, found via live timing.
+- **Shared `ConfigManager`**: so the chat-panel toggle reaches the provider
+  without a reload (previously chat and the provider held separate instances).
+
+### Judge Findings Addressed
+
+Approved 28/30, no Critical findings. Both Minor findings fixed before close:
+(1) the completion timeout was a 10s debug value vs §1's 3s → set to 5s and the
+deviation recorded as DECISIONS 013, with DATA_FLOW §1 annotated; (2) the
+`buildFIMPrompt` signature dropped the `filename`/`language` params PHASES.md
+listed → PHASES.md updated to the live-validated plain-FIM signature. Privacy was
+verified directly by the Judge (every `fetch` targets `127.0.0.1:11434`).
+
+### Known Issues
+
+Tracked as Linear issues (Linear is external to this repo — log there):
+- Provider-level logic (debounce, supersession, timing, status-bar ref-count) is
+  `vscode`-coupled and not unit-tested — verified by manual F5 per the DoD.
+- The completion timeout (5s) is a hardware-informed default; revisit with
+  real-world latency once more machines are tested.
+
+No critical issues.
+
+### Current State
+
+Pausing while typing in a supported language shows a ghost-text suggestion (Tab
+to accept, Esc to dismiss); rapid typing debounces and supersedes cleanly, and a
+status-bar spinner signals generation. The chat panel gained an Autocomplete
+on/off switch and a typing indicator. Not yet built: CMD+K editing (Phase 5) and
+`@codebase` + the onboarding UI (Phase 6).
+
+---
+
 ## Phase 3 — Sidebar Chat
 **Status:** Approved by Judge Agent
 **Judge Score:** 27/30 (see JUDGE_SCORES.md)
