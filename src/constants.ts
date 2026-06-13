@@ -239,3 +239,78 @@ export const MAX_HISTORY_MESSAGES = 20;
  * the user presses Stop (FEATURES.md §3 timeout state).
  */
 export const CHAT_FIRST_TOKEN_TIMEOUT_MS = 30_000;
+
+// ----------------------------------------------------------------------------
+// Inline completions (PHASES.md Phase 4 / DATA_FLOW.md §1)
+// ----------------------------------------------------------------------------
+
+/**
+ * Idle time after the last keystroke before a completion is requested. Keeps us
+ * from firing (and cancelling) a request on every character while typing.
+ */
+export const COMPLETION_DEBOUNCE_MS = 600;
+
+/**
+ * Hard budget for a single completion request. A suggestion that doesn't arrive
+ * by then is aborted and nothing renders (DATA_FLOW.md §1 — no error surfaced).
+ *
+ * DATA_FLOW.md specifies 3s, but on slower / disk-constrained machines the first
+ * completion (model still warming up) routinely needs longer, and a silent abort
+ * looks like "autocomplete is broken". Kept generous here; the per-request
+ * latency now prints to the Output channel ("[completion] served in N ms"), so
+ * this can be dialed back to ~3s once real numbers are known.
+ */
+export const COMPLETION_TIMEOUT_MS = 10_000;
+
+/** Lines of context taken above / below the cursor for the FIM prompt. */
+export const COMPLETION_PREFIX_LINES = 20;
+export const COMPLETION_SUFFIX_LINES = 10;
+
+/**
+ * Completion sampling (DATA_FLOW.md §1). Low temperature for deterministic,
+ * conservative code; `stop` ends the suggestion at a blank line so a completion
+ * can span a few lines without running away.
+ */
+export const COMPLETION_TEMPERATURE = 0.1;
+export const COMPLETION_TOP_P = 0.95;
+export const COMPLETION_STOP = ["\n\n"];
+
+/**
+ * How long Ollama keeps the autocomplete model resident between requests.
+ * Ollama unloads after 5 min idle by default; reloading costs ~2.5s (a cold
+ * model load), which is the dominant latency for inline completion. Holding it
+ * for 30 min keeps a typing session snappy at the cost of ~1GB RAM.
+ */
+export const COMPLETION_KEEP_ALIVE = "30m";
+
+/**
+ * Language IDs that get inline completions. A curated allowlist of code
+ * languages — markdown/JSON/plaintext/etc. are excluded because FIM completion
+ * there is noise more than help (Phase 4 scope decision).
+ */
+export const COMPLETION_LANGUAGES: readonly string[] = [
+  "typescript",
+  "typescriptreact",
+  "javascript",
+  "javascriptreact",
+  "python",
+  "go",
+  "rust",
+  "java",
+  "c",
+  "cpp",
+  "csharp",
+  "ruby",
+  "php",
+  "swift",
+  "kotlin",
+  "scala",
+  "shellscript",
+  "lua",
+  "html",
+  "css",
+  "scss",
+  "vue",
+  "svelte",
+  "sql",
+];

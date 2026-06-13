@@ -30,6 +30,7 @@ export class ConfigManager {
       autocompleteModel: null,
       embeddingModel: null,
       workspaceIndexes: {},
+      inlineCompletionsEnabled: true,
     };
   }
 

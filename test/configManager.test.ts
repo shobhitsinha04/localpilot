@@ -60,6 +60,8 @@ describe("ConfigManager", () => {
     expect(loaded.tier).toBe(2);
     expect(loaded.embeddingModel).toBeNull();
     expect(loaded.workspaceIndexes).toEqual({});
+    // Newer key absent from the old file backfills to its default (on).
+    expect(loaded.inlineCompletionsEnabled).toBe(true);
   });
 
   it("rejects (does not silently swallow) when the storage dir can't be created", async () => {

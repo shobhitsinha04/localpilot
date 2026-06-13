@@ -32,6 +32,19 @@ describe("parseWebviewMessage", () => {
     ).toBeNull();
   });
 
+  it("accepts setAutocomplete with a boolean and rejects other types", () => {
+    expect(
+      parseWebviewMessage({ type: "setAutocomplete", enabled: true }),
+    ).toEqual({ type: "setAutocomplete", enabled: true });
+    expect(
+      parseWebviewMessage({ type: "setAutocomplete", enabled: false }),
+    ).toEqual({ type: "setAutocomplete", enabled: false });
+    expect(parseWebviewMessage({ type: "setAutocomplete" })).toBeNull();
+    expect(
+      parseWebviewMessage({ type: "setAutocomplete", enabled: "yes" }),
+    ).toBeNull();
+  });
+
   it("rejects unknown types and non-object input", () => {
     expect(parseWebviewMessage({ type: "evil" })).toBeNull();
     expect(parseWebviewMessage(null)).toBeNull();

@@ -13,11 +13,12 @@ export type WebviewMessage =
   | { type: "stop" }
   | { type: "newChat" }
   | { type: "restart" }
-  | { type: "retry" };
+  | { type: "retry" }
+  | { type: "setAutocomplete"; enabled: boolean };
 
 /** Messages the extension host sends to the webview. */
 export type HostMessage =
-  | { type: "init"; model: string }
+  | { type: "init"; model: string; autocompleteEnabled: boolean }
   | { type: "streamStart" }
   | { type: "streamToken"; token: string }
   | { type: "streamEnd" }
@@ -41,6 +42,10 @@ export function parseWebviewMessage(raw: unknown): WebviewMessage | null {
     case "sendMessage":
       return typeof m.text === "string" && m.text.trim().length > 0
         ? { type: "sendMessage", text: m.text }
+        : null;
+    case "setAutocomplete":
+      return typeof m.enabled === "boolean"
+        ? { type: "setAutocomplete", enabled: m.enabled }
         : null;
     default:
       return null;

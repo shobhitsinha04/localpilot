@@ -358,28 +358,65 @@ export class OllamaService {
     }
   }
 
-  /** Single-shot completion (POST /api/generate, not streamed). */
+  /**
+   * Single-shot completion (POST /api/generate, not streamed). Sent with
+   * `raw: true` so the prompt reaches the model verbatim — inline completion
+   * relies on Qwen FIM tokens that Ollama would otherwise wrap in the instruct
+   * chat template (validated in Phase 4).
+   *
+   * Cancellation: pass a `signal` (superseded by a newer keystroke) and/or a
+   * short `timeoutMs`. Either firing aborts the request and resolves to "" —
+   * for inline completion an abort means "no suggestion", not an error.
+   */
   async complete(
     prompt: string,
     model: string,
     options?: OllamaRequestOptions,
+    signal?: AbortSignal,
+    timeoutMs: number = OLLAMA_REQUEST_TIMEOUT_MS,
+    keepAlive?: string,
   ): Promise<string> {
-    const res = await this.fetchWithTimeout(
-      `${this.baseUrl}/api/generate`,
-      {
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    if (signal) {
+      if (signal.aborted) return "";
+      signal.addEventListener("abort", abortFromCaller, { once: true });
+    }
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, stream: false, options }),
-      },
-      OLLAMA_REQUEST_TIMEOUT_MS,
-    );
-    if (!res.ok) {
-      throw new OllamaError(
-        `Ollama /api/generate returned ${res.status} ${res.statusText}`,
-      );
+        body: JSON.stringify({
+          model,
+          prompt,
+          stream: false,
+          raw: true,
+          options,
+          // Keep the model resident between requests so repeat completions don't
+          // re-pay the cold-load cost (the dominant latency). Omitted → Ollama
+          // default (5 min).
+          ...(keepAlive ? { keep_alive: keepAlive } : {}),
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new OllamaError(
+          `Ollama /api/generate returned ${res.status} ${res.statusText}`,
+        );
+      }
+      const data = (await res.json()) as OllamaStreamChunk;
+      return data.response ?? "";
+    } catch (err) {
+      // A timeout or a superseding keystroke aborts the request — normal for
+      // inline completion, so report "no completion" rather than throwing.
+      if (controller.signal.aborted) return "";
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
     }
-    const data = (await res.json()) as OllamaStreamChunk;
-    return data.response ?? "";
   }
 
   /** Generate an embedding vector (POST /api/embeddings). */

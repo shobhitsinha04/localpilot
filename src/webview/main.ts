@@ -53,6 +53,9 @@ const input = document.getElementById("input") as HTMLTextAreaElement;
 const sendBtn = document.getElementById("send") as HTMLButtonElement;
 const newChatBtn = document.getElementById("new-chat") as HTMLButtonElement;
 const modelName = document.getElementById("model-name") as HTMLElement;
+const autocompleteToggle = document.getElementById(
+  "toggle-autocomplete",
+) as HTMLInputElement;
 
 // --- state ------------------------------------------------------------------
 let generating = false;
@@ -94,10 +97,13 @@ function startAssistantBubble(): void {
   assistantBuffer = "";
   assistantEl = document.createElement("div");
   assistantEl.className = "msg msg-assistant streaming";
-  // Show the blinking cursor immediately so the panel signals "working" during
-  // the (sometimes long) time before the first token arrives, instead of
-  // sitting blank.
-  assistantEl.innerHTML = '<span class="cursor"></span>';
+  // Show an animated typing indicator immediately so the panel clearly signals
+  // "working" during the (sometimes long) wait before the first token arrives,
+  // instead of sitting blank. The first rendered token replaces it (the dots are
+  // swapped for the streaming text + cursor in scheduleRender).
+  assistantEl.innerHTML =
+    '<span class="typing" aria-label="Assistant is thinking">' +
+    "<span></span><span></span><span></span></span>";
   conversation.appendChild(assistantEl);
   scrollToBottom(true);
 }
@@ -324,6 +330,12 @@ function showNewChatConfirm(): void {
   confirmBtn.focus();
 }
 
+// --- autocomplete toggle ----------------------------------------------------
+// Persist the switch the moment it flips; the host applies it live.
+autocompleteToggle.addEventListener("change", () => {
+  post({ type: "setAutocomplete", enabled: autocompleteToggle.checked });
+});
+
 // Clickable "Try" suggestions in the empty state populate the input.
 emptyState.querySelectorAll("[data-try]").forEach((el) => {
   el.addEventListener("click", () => {
@@ -340,6 +352,7 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
   switch (msg.type) {
     case "init":
       modelName.textContent = msg.model;
+      autocompleteToggle.checked = msg.autocompleteEnabled;
       break;
     case "streamStart":
       setGenerating(true);

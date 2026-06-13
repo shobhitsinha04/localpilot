@@ -85,14 +85,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (this.pendingMessage)
             void this.handleUserMessage(this.pendingMessage);
           break;
+        case "setAutocomplete":
+          void this.setAutocomplete(msg.enabled);
+          break;
       }
     });
   }
 
   private async sendInit(): Promise<void> {
     await this.config.load();
-    const model = this.config.get().chatModel ?? "no model selected";
-    this.post({ type: "init", model });
+    const config = this.config.get();
+    this.post({
+      type: "init",
+      model: config.chatModel ?? "no model selected",
+      autocompleteEnabled: config.inlineCompletionsEnabled,
+    });
+  }
+
+  /** Persist the autocomplete on/off switch; the provider reads it live. */
+  private async setAutocomplete(enabled: boolean): Promise<void> {
+    await this.config.update({ inlineCompletionsEnabled: enabled });
+    this.logger.info(`Inline completions ${enabled ? "enabled" : "disabled"}.`);
   }
 
   private async handleUserMessage(text: string): Promise<void> {
@@ -242,11 +255,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <path d="M11 2.5l2.5 2.5L6 12.5 3 13l.5-3L11 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
         </svg>
       </button>
-      <button class="icon-btn" id="more" title="More (coming soon)" aria-label="More" disabled>
-        <svg viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/>
-        </svg>
-      </button>
+      <label class="header-switch" title="Toggle inline autocomplete on/off">
+        <span class="header-switch-label">Autocomplete</span>
+        <span class="switch">
+          <input type="checkbox" id="toggle-autocomplete" title="Toggle inline autocomplete on/off" aria-label="Toggle autocomplete" />
+          <span class="slider"></span>
+        </span>
+      </label>
     </div>
   </header>
 

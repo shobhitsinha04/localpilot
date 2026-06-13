@@ -60,7 +60,8 @@ body {
 
 .header-actions {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
 }
 
 .icon-btn {
@@ -89,6 +90,74 @@ body {
 .icon-btn svg {
   width: 16px;
   height: 16px;
+}
+
+/* ---- Autocomplete toggle switch (in the header) ---- */
+/* A labelled, styled checkbox that toggles inline completions; sits beside the
+   New Chat button. The visible label + tooltip make its purpose obvious. */
+.header-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.header-switch-label {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--vscode-input-background, rgba(128, 128, 128, 0.4));
+  border: 1px solid var(--vscode-input-border, transparent);
+  transition: background 120ms ease;
+}
+
+.slider::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--vscode-foreground);
+  transition: transform 120ms ease;
+}
+
+.switch input:checked + .slider {
+  background: var(--localpilot-accent);
+  border-color: var(--localpilot-accent);
+}
+
+.switch input:checked + .slider::before {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+.switch input:focus-visible + .slider {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
 }
 
 /* ---- Conversation ---- */
@@ -252,6 +321,44 @@ body {
 @keyframes blink {
   to {
     visibility: hidden;
+  }
+}
+
+/* Typing indicator: three bouncing dots shown while waiting for the first token */
+.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  opacity: 0.4;
+  animation: typing-bounce 1.2s infinite ease-in-out both;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing-bounce {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  35% {
+    transform: translateY(-4px);
+    opacity: 1;
   }
 }
 

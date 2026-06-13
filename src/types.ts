@@ -56,6 +56,8 @@ export interface LocalPilotConfig {
   autocompleteModel: string | null;
   embeddingModel: string | null;
   workspaceIndexes: Record<string, WorkspaceIndexState>;
+  /** Inline (FIM) completions toggle, flipped from the chat panel (Phase 4). */
+  inlineCompletionsEnabled: boolean;
 }
 
 // ----------------------------------------------------------------------------

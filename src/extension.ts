@@ -1,28 +1,33 @@
 import * as vscode from "vscode";
 
 import { ChatViewProvider } from "./chatViewProvider";
+import { CompletionProvider } from "./completionProvider";
+import { COMPLETION_KEEP_ALIVE, COMPLETION_LANGUAGES } from "./constants";
 import { ConfigManager } from "./services/configManager";
 import { HardwareDetector, modelsForTier } from "./services/hardwareDetector";
 import { IndexManager } from "./services/indexManager";
 import { OllamaService } from "./services/ollamaService";
 import type { Logger } from "./types";
 
-// Phase 1 — Ollama Integration + Hardware Detection, then
-// Phase 2 — Codebase Indexing (PHASES.md).
+// Phase 1 — Ollama Integration + Hardware Detection, Phase 2 — Codebase
+// Indexing, Phase 3 — Sidebar Chat, Phase 4 — Inline Completions (PHASES.md).
 //
 // On activation the extension runs a developer smoke test (not user-facing yet):
 // detect hardware -> pick tier/models -> install/start Ollama -> pull the chat
-// model -> send "say hello" -> [Phase 2] pull the embedding model -> index the
-// workspace into LanceDB -> run a test query -> register a watcher for
-// incremental updates. All progress goes to the Output Channel. There is no
-// observability proxy in v1 (Helicone deferred — DECISIONS 011); the Ollama
-// Service talks to Ollama directly.
+// model -> send "say hello" -> [Phase 4] register the inline-completion provider
+// -> [Phase 2] pull the embedding model -> index the workspace into LanceDB ->
+// run a test query -> register a watcher for incremental updates. The sidebar
+// chat (Phase 3) is registered up front in activate(). All progress goes to the
+// Output Channel. There is no observability proxy in v1 (Helicone deferred —
+// DECISIONS 011); the Ollama Service talks to Ollama directly.
 
 let ollamaService: OllamaService | undefined;
 /** Guards against overlapping smoke-test runs (activation + manual command). */
 let smokeTestInFlight = false;
 /** Set once the incremental-index file watcher has been registered. */
 let indexWatcherRegistered = false;
+/** Set once the inline-completion provider has been registered. */
+let completionProviderRegistered = false;
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("LocalPilot");
@@ -34,21 +39,25 @@ export function activate(context: vscode.ExtensionContext): void {
   ollamaService = new OllamaService({ logger });
   const ollama = ollamaService;
 
+  // One ConfigManager shared across the session so the chat panel, smoke test,
+  // and completion provider read/write the same cached config — e.g. the
+  // chat-panel autocomplete toggle reaches the provider without a reload.
+  const config = new ConfigManager(context.globalStorageUri.fsPath, logger);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("localpilot.helloWorld", () => {
       vscode.window.showInformationMessage("Hello World from LocalPilot!");
     }),
     vscode.commands.registerCommand("localpilot.runSmokeTest", () => {
-      void runSmokeTest(context, logger, channel, ollama);
+      void runSmokeTest(context, logger, channel, ollama, config);
     }),
   );
 
   // Phase 3 — register the sidebar chat panel (FEATURES.md §3).
-  const chatConfig = new ConfigManager(context.globalStorageUri.fsPath, logger);
   const chatProvider = new ChatViewProvider(
     context.extensionUri,
     ollama,
-    chatConfig,
+    config,
     logger,
   );
   context.subscriptions.push(
@@ -67,7 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Fire-and-forget so a long model pull never blocks VS Code activation.
-  void runSmokeTest(context, logger, channel, ollama);
+  void runSmokeTest(context, logger, channel, ollama, config);
 }
 
 export function deactivate(): void {
@@ -104,6 +113,7 @@ async function runSmokeTest(
   logger: Logger,
   channel: vscode.OutputChannel,
   ollama: OllamaService,
+  config: ConfigManager,
 ): Promise<void> {
   if (smokeTestInFlight) {
     logger.warn("Smoke test already running; ignoring duplicate trigger.");
@@ -114,7 +124,6 @@ async function runSmokeTest(
   logger.info("LocalPilot Phase 1 smoke test starting...");
 
   try {
-    const config = new ConfigManager(context.globalStorageUri.fsPath, logger);
     await config.load();
 
     // 1. Hardware detection + tier mapping.
@@ -201,6 +210,15 @@ async function runSmokeTest(
     logger.info(`Model response: ${response.trim()}`);
     logger.info("Phase 1 smoke test complete. ✓");
 
+    // Phase 4 — register inline completions. Independent of indexing, so a
+    // failure here (e.g. pulling a tier-3/4 autocomplete model) must not block
+    // the Phase 2 step below.
+    try {
+      await registerCompletionProvider(context, logger, config, ollama);
+    } catch (err) {
+      logger.error("Failed to register inline completion provider", err);
+    }
+
     // 6. Phase 2 — index the workspace and run a test query.
     await runIndexingSmokeTest(
       context,
@@ -281,7 +299,7 @@ async function runIndexingSmokeTest(
   });
 
   // Run a sample query and log the top hits.
-  const query = "what colors were used for the links ";
+  const query = "how to estimate the reading time";
   const hits = await indexManager.search(query);
   logger.info(`Top ${Math.min(3, hits.length)} chunks for "${query}":`);
   hits.slice(0, 3).forEach((hit, i) => {
@@ -294,6 +312,87 @@ async function runIndexingSmokeTest(
 
   registerIndexWatcher(context, logger, indexManager);
   logger.info("Phase 2 indexing smoke test complete. ✓");
+}
+
+/**
+ * Register the inline-completion provider (PHASES.md Phase 4). Ensures the
+ * configured autocomplete model is present first — on tier 1/2 it is the same
+ * model as chat (already pulled), but tier 3/4 use a separate model the earlier
+ * steps don't fetch. Registered once per session; the provider itself stays
+ * silent when no model is configured.
+ */
+async function registerCompletionProvider(
+  context: vscode.ExtensionContext,
+  logger: Logger,
+  config: ConfigManager,
+  ollama: OllamaService,
+): Promise<void> {
+  if (completionProviderRegistered) return;
+
+  const model = config.get().autocompleteModel;
+  if (!model) {
+    logger.warn(
+      "No autocomplete model configured; inline completions disabled.",
+    );
+    return;
+  }
+
+  if (!(await ollama.hasModel(model))) {
+    logger.info(`Pulling autocomplete model ${model}...`);
+    let lastPercent = -1;
+    await ollama.pullModel(model, (progress) => {
+      if (progress.percent !== undefined && progress.percent !== lastPercent) {
+        lastPercent = progress.percent;
+        logger.info(`  ${model}: ${progress.status} ${progress.percent}%`);
+      }
+    });
+    logger.info(`Autocomplete model ready: ${model}`);
+  }
+
+  // Restrict to real and unsaved documents in the supported languages — avoids
+  // firing ghost text in output panels, diffs, and other read-only editors.
+  const selector: vscode.DocumentSelector = COMPLETION_LANGUAGES.flatMap(
+    (language) => [
+      { language, scheme: "file" },
+      { language, scheme: "untitled" },
+    ],
+  );
+  // Status-bar spinner shown while a completion is being generated — the inline
+  // equivalent of the chat "typing" dots, since ghost text can't host a loader.
+  const statusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
+  statusBar.text = "$(loading~spin) LocalPilot";
+  statusBar.tooltip = "LocalPilot is generating a completion…";
+  context.subscriptions.push(
+    statusBar,
+    vscode.languages.registerInlineCompletionItemProvider(
+      selector,
+      new CompletionProvider(ollama, config, logger, statusBar),
+    ),
+  );
+  completionProviderRegistered = true;
+  logger.info("Inline completion provider registered.");
+
+  // Pre-warm: a cold model load is ~2.5s and dominates first-completion latency.
+  // Load it now (fire-and-forget) so the user's first real completion is warm.
+  const warmStart = Date.now();
+  void ollama
+    .complete(
+      "// warm up",
+      model,
+      undefined,
+      undefined,
+      15_000,
+      COMPLETION_KEEP_ALIVE,
+    )
+    .then(() =>
+      logger.info(`Autocomplete model warmed in ${Date.now() - warmStart}ms.`),
+    )
+    .catch(() => {
+      /* harmless — the first real completion will load it instead */
+    });
 }
 
 /**
