@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { ChatViewProvider } from "./chatViewProvider";
+import { CmdKController } from "./cmdkController";
 import { CompletionProvider } from "./completionProvider";
 import { COMPLETION_KEEP_ALIVE, COMPLETION_LANGUAGES } from "./constants";
 import { ConfigManager } from "./services/configManager";
@@ -73,6 +74,23 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidChangeActiveTextEditor((editor) =>
       chatProvider.noteActiveEditor(editor),
     ),
+  );
+
+  // Phase 5 — CMD+K inline editing. The controller owns the edit session and
+  // also provides the Accept/Reject CodeLens.
+  const cmdk = new CmdKController(ollama, config, logger);
+  context.subscriptions.push(
+    cmdk,
+    vscode.commands.registerCommand("localpilot.editSelection", () =>
+      cmdk.start(),
+    ),
+    vscode.commands.registerCommand("localpilot.acceptEdit", () =>
+      cmdk.accept(),
+    ),
+    vscode.commands.registerCommand("localpilot.rejectEdit", () =>
+      cmdk.reject(),
+    ),
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, cmdk),
   );
 
   // Fire-and-forget so a long model pull never blocks VS Code activation.

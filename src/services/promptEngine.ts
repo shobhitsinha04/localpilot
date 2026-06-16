@@ -5,6 +5,8 @@ import {
   COMPLETION_STOP,
   COMPLETION_TEMPERATURE,
   COMPLETION_TOP_P,
+  EDIT_TEMPERATURE,
+  EDIT_TOP_P,
   MAX_HISTORY_MESSAGES,
 } from "../constants";
 import type { ChatMessage, FileContext, OllamaRequestOptions } from "../types";
@@ -92,5 +94,36 @@ export class PromptEngine {
       top_p: COMPLETION_TOP_P,
       stop: COMPLETION_STOP,
     };
+  }
+
+  /**
+   * Build the prompt body for a CMD+K rewrite (DATA_FLOW.md §2). Pairs with the
+   * EDIT_SYSTEM_PROMPT constant, which the caller sends in the request's `system`
+   * field. `prefix`/`suffix` are the context lines above/below the selection;
+   * empty context blocks are omitted so the model isn't handed blank fences.
+   */
+  buildEditPrompt(
+    instruction: string,
+    selection: string,
+    prefix: string,
+    suffix: string,
+    filename: string,
+    language: string,
+  ): string {
+    const parts: string[] = [`File: ${filename} (language: ${language})`, ""];
+    if (prefix.trim().length > 0) {
+      parts.push("Code before the selection:", "```", prefix, "```", "");
+    }
+    parts.push("The selected code to rewrite:", "```", selection, "```", "");
+    if (suffix.trim().length > 0) {
+      parts.push("Code after the selection:", "```", suffix, "```", "");
+    }
+    parts.push(`Instruction: ${instruction}`);
+    return parts.join("\n");
+  }
+
+  /** Sampling options for a CMD+K rewrite (DATA_FLOW.md §2). */
+  editOptions(): OllamaRequestOptions {
+    return { temperature: EDIT_TEMPERATURE, top_p: EDIT_TOP_P };
   }
 }

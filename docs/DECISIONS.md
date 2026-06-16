@@ -367,3 +367,70 @@ target, so the looser ceiling only affects the rare cold completion.
 - Mitigations that keep the warm path fast (pre-warm on registration,
   `COMPLETION_KEEP_ALIVE`) are themselves additions beyond DATA_FLOW §1,
   recorded in the Phase 4 CHANGELOG entry.
+
+---
+
+### 014 — CMD+K instruction input uses a native input box
+
+**Decision:** The CMD+K instruction prompt is `vscode.window.showInputBox`
+(a native quick-input at the top of the editor), not the floating,
+accent-bordered box "rendered as a VS Code editor decoration" described in
+UI_UX.md §"CMD+K Input Box".
+
+**Date:** 2026-06-15
+
+**Why:** Stable VS Code APIs cannot host an editable text input at an arbitrary
+position in the editor. Decorations only style ranges of existing text — they
+cannot contain a focusable `<input>`. The only ways to float a custom editable
+widget over the editor are proposed APIs (e.g. `createWebviewTextEditorInset`)
+that cannot ship in a Marketplace extension. `showInputBox` is the native,
+reliable, stable-API equivalent: it carries the "✦ Edit" title and the
+"Describe your edit…" placeholder, and the selection stays highlighted while the
+user types.
+
+**Alternatives considered:**
+- Comment Controller inline input — editable and positioned near the selection,
+  but styled as a comment thread (cannot match the accent box) and a heavier,
+  clunkier mechanism. Rejected for v1.
+- Proposed inset webview API — matches the spec visually but cannot ship.
+
+**Consequences:**
+- The instruction box appears at the top-centre of the editor rather than
+  floating above the selection. Behaviour (single edit, Esc cancels) is
+  unchanged. UI_UX.md's exact visual is treated as aspirational where it
+  exceeds stable-API capability.
+
+---
+
+### 015 — CMD+K diff uses theme decorations + a CodeLens (no floating bar, no ±gutter glyphs)
+
+**Decision:** The CMD+K rewrite is shown with whole-line red/green
+`TextEditorDecorationType` backgrounds (using the `--vscode-diffEditor-*` theme
+colours), and the Accept/Reject affordance is a **CodeLens** above the diff
+block — not the floating, right-aligned button bar in UI_UX.md §"Diff View".
+The literal `−`/`+` gutter prefixes that section lists are **not** rendered.
+
+**Date:** 2026-06-15
+
+**Why:** Two stable-API limits.
+- An interactive button bar cannot float over the editor with stable APIs
+  (same constraint as decision 014). A CodeLens is the native, clickable,
+  inline equivalent ("✓ Accept ⌘↩" / "✗ Reject Esc"), backed by keybindings.
+- Gutter glyphs require `gutterIconPath`, which takes a static image whose
+  colour cannot follow the active theme. Rendering a red `−` / green `+` there
+  would mean hardcoding colours, which UI_UX.md §"What Claude Code Should Never
+  Do" explicitly forbids ("Hardcode any color values except --localpilot-
+  accent"). The red/green line backgrounds, a 2px left border, and overview-
+  ruler marks — all theme-driven — convey removed vs added without hardcoding.
+
+**Alternatives considered:**
+- Inline `before` "−"/"+" content — theme-colourable but shifts the code text
+  right and reads like the source actually starts with a glyph. Rejected.
+- Shipping coloured SVG gutter icons — would violate the no-hardcoded-colour
+  rule. Rejected.
+
+**Consequences:**
+- Diff semantics (red removed / green added, Accept/Reject) are fully present
+  and theme-correct; the floating bar and ±gutter glyphs are the cosmetic gap.
+- Accept (⌘↩) / Reject (Esc) also work via keybindings scoped to
+  `localpilot.cmdkActive`.

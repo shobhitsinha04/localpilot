@@ -7,6 +7,8 @@ import {
   COMPLETION_STOP,
   COMPLETION_TEMPERATURE,
   COMPLETION_TOP_P,
+  EDIT_TEMPERATURE,
+  EDIT_TOP_P,
   MAX_HISTORY_MESSAGES,
 } from "../src/constants";
 import { PromptEngine } from "../src/services/promptEngine";
@@ -130,6 +132,68 @@ describe("PromptEngine.completionOptions", () => {
       temperature: COMPLETION_TEMPERATURE,
       top_p: COMPLETION_TOP_P,
       stop: COMPLETION_STOP,
+    });
+  });
+});
+
+describe("PromptEngine.buildEditPrompt", () => {
+  it("includes the filename, language, selection, and instruction", () => {
+    const out = engine.buildEditPrompt(
+      "make it async",
+      "function f() {}",
+      "const a = 1;",
+      "const b = 2;",
+      "src/x.ts",
+      "typescript",
+    );
+    expect(out).toContain("src/x.ts");
+    expect(out).toContain("typescript");
+    expect(out).toContain("function f() {}");
+    expect(out).toContain("Instruction: make it async");
+    expect(out).toContain("The selected code to rewrite:");
+  });
+
+  it("includes both context blocks when prefix and suffix are non-empty", () => {
+    const out = engine.buildEditPrompt(
+      "x",
+      "sel",
+      "before code",
+      "after code",
+      "f.ts",
+      "typescript",
+    );
+    expect(out).toContain("Code before the selection:");
+    expect(out).toContain("before code");
+    expect(out).toContain("Code after the selection:");
+    expect(out).toContain("after code");
+  });
+
+  it("omits an empty context block (selection at file start)", () => {
+    const out = engine.buildEditPrompt(
+      "x",
+      "sel",
+      "",
+      "after",
+      "f.ts",
+      "typescript",
+    );
+    expect(out).not.toContain("Code before the selection:");
+    expect(out).toContain("Code after the selection:");
+  });
+
+  it("omits both context blocks when the file is just the selection", () => {
+    const out = engine.buildEditPrompt("x", "sel", "", "", "f.ts", "ts");
+    expect(out).not.toContain("Code before the selection:");
+    expect(out).not.toContain("Code after the selection:");
+    expect(out).toContain("The selected code to rewrite:");
+  });
+});
+
+describe("PromptEngine.editOptions", () => {
+  it("returns the DATA_FLOW §2 sampling options", () => {
+    expect(engine.editOptions()).toEqual({
+      temperature: EDIT_TEMPERATURE,
+      top_p: EDIT_TOP_P,
     });
   });
 });

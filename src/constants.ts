@@ -315,3 +315,22 @@ export const COMPLETION_LANGUAGES: readonly string[] = [
   "svelte",
   "sql",
 ];
+
+// ----------------------------------------------------------------------------
+// CMD+K inline editing (PHASES.md Phase 5 / DATA_FLOW.md §2)
+// ----------------------------------------------------------------------------
+
+/**
+ * System prompt for a CMD+K rewrite (DATA_FLOW.md §2). The model must return
+ * only the rewritten code — any prose would be inserted into the file verbatim.
+ */
+export const EDIT_SYSTEM_PROMPT =
+  "Rewrite the selected code according to the instruction. " +
+  "Return only the rewritten code, no explanation, no markdown fences.";
+
+/** Edit sampling (DATA_FLOW.md §2). Low temperature for faithful rewrites. */
+export const EDIT_TEMPERATURE = 0.2;
+export const EDIT_TOP_P = 0.95;
+
+/** Lines of surrounding context included above and below the selection. */
+export const EDIT_CONTEXT_LINES = 10;

@@ -419,6 +419,64 @@ export class OllamaService {
     }
   }
 
+  /**
+   * Streaming completion (POST /api/generate, streamed) for CMD+K inline edits
+   * (DATA_FLOW.md §2). Unlike `complete()` this is NOT `raw` — the instruct chat
+   * model must apply its template so it follows the `system` rewrite instruction.
+   * Yields tokens as they arrive; pass an `AbortSignal` (Esc / Reject) to stop —
+   * an abort ends the generator quietly rather than throwing.
+   */
+  async *generateStream(
+    prompt: string,
+    model: string,
+    options?: OllamaRequestOptions,
+    signal?: AbortSignal,
+    system?: string,
+  ): AsyncGenerator<string> {
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    if (signal) {
+      if (signal.aborted) return;
+      signal.addEventListener("abort", abortFromCaller, { once: true });
+    }
+
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`${this.baseUrl}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            prompt,
+            system,
+            stream: true,
+            options,
+          }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (signal?.aborted) return; // Cancelled before the response began.
+        throw err;
+      }
+
+      if (!res.ok || !res.body) {
+        throw new OllamaError(
+          `Ollama /api/generate returned ${res.status} ${res.statusText}`,
+        );
+      }
+
+      try {
+        yield* this.streamTokens(res.body, "generate");
+      } catch (err) {
+        if (controller.signal.aborted) return; // Cancelled mid-stream.
+        throw err;
+      }
+    } finally {
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
+  }
+
   /** Generate an embedding vector (POST /api/embeddings). */
   async embed(text: string, model: string): Promise<number[]> {
     const res = await this.fetchWithTimeout(

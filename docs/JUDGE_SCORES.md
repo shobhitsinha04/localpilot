@@ -14,6 +14,28 @@ Dimensions: **Spec** (Spec Compliance) · **Arch** (Architecture) ·
 
 ---
 
+## Phase 5 — CMD+K Inline Editing
+
+| Run | Date | Spec | Arch | Err | Priv | Qual | Test | Total | Status |
+|-----|------|------|------|-----|------|------|------|-------|--------|
+| 1 | 2026-06-15 | 4 | 5 | 4 | 5 | 5 | 4 | 27 | APPROVED |
+
+**Run 1 notes:** Approved cold at 27/30, no Critical findings. Judge verified
+Privacy directly (every `fetch` → `127.0.0.1:11434`), confirmed the race-safe
+Esc teardown (session detached synchronously, in-flight renders drained before
+restore), and that decorations/emitter are disposed. Two Minor findings, both
+**fixed before close**: (a) the two stable-API UI deviations (input box =
+`showInputBox`, Accept/Reject = CodeLens) lacked DECISIONS entries → added
+DECISIONS 014 and 015; (b) the diff view omits the literal `−`/`+` gutter glyphs
+UI_UX.md specifies → recorded in DECISIONS 015 (theme-coloured gutter glyphs are
+not achievable via stable decoration APIs without hardcoding colours, which
+UI_UX.md forbids; red/green line backgrounds + border + ruler convey the diff).
+Also addressed the Judge's observation: a failed final restore edit now logs a
+warning instead of failing silently. Observations (templated `generateStream`,
+per-token `cleanEditOutput`, accept no-op mid-stream) accepted as documented.
+
+---
+
 ## Phase 4 — Inline Completions
 
 | Run | Date | Spec | Arch | Err | Priv | Qual | Test | Total | Status |

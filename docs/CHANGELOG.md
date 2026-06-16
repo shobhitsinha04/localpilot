@@ -9,6 +9,93 @@ the current state of the codebase before writing any new code.
 
 ---
 
+## Phase 5 — CMD+K Inline Editing
+**Status:** Approved by Judge Agent
+**Judge Score:** 27/30 (see JUDGE_SCORES.md)
+
+### What Was Built
+
+Select code → **⌘K** → type an instruction → the selection is rewritten by the
+model and shown as a red/green diff → **⌘↩ Accept** / **Esc Reject**
+(FEATURES.md, DATA_FLOW.md §2, UI_UX.md). Uses the chat model (already pulled);
+not a webview feature — it manipulates the editor directly.
+
+`PromptEngine.buildEditPrompt(instruction, selection, prefix, suffix, filename,
+language)` (src/services/promptEngine.ts): assembles the rewrite prompt body —
+filename/language, the 10 lines of context above and below, the delimited
+selection, and the instruction (empty context blocks omitted). Pairs with the
+`EDIT_SYSTEM_PROMPT` constant ("Rewrite the selected code… return only the
+rewritten code"). `editOptions()` returns the DATA_FLOW §2 sampling (temperature
+0.2, top_p 0.95). Pure and `vscode`-free.
+
+`diffLines(original, updated)` (src/services/lineDiff.ts): a pure LCS line diff
+producing `context` / `removed` / `added` rows, used to render the red/green
+view. Display-only — the exact original text is kept verbatim for a clean Reject.
+
+`cleanEditOutput(raw)` (src/services/editPostprocess.ts): strips the ```lang …
+``` fences small instruct models add despite the system prompt. Safe on a
+partial buffer, so it runs on every streamed token for a clean live preview.
+
+`OllamaService.generateStream()` (src/services/ollamaService.ts): streaming
+`POST /api/generate`, instruct-templated (NOT `raw`, unlike Phase 4's
+`complete()` — the model must follow the rewrite instruction), with the system
+prompt in the `system` field and an `AbortSignal` for Esc/Reject.
+
+`CmdKController` (src/cmdkController.ts): the editor-coupled session machine.
+Captures the selection, prompts via `showInputBox`, streams the rewrite into the
+document live (coalesced edits), then swaps the preview for a red/green diff
+block (theme-coloured whole-line decorations) with an Accept/Reject CodeLens. A
+context key `localpilot.cmdkActive` scopes the ⌘↩ / Esc keybindings. Teardown is
+race-safe: on Esc the session is detached synchronously and in-flight renders
+are drained before the original is restored, so a mid-stream cancel leaves the
+file exactly as it was. `[cmd+k]` timing/state logs go to the Output channel. The
+controller is a `Disposable` (decorations + CodeLens emitter disposed).
+
+134 Vitest tests (up from 113) — `buildEditPrompt`/`editOptions`, the line diff,
+and the fence cleaner.
+
+### Implementation Decisions
+
+- **Input box = `showInputBox`** (DECISIONS 014): a decoration cannot host an
+  editable input, so the spec's floating box isn't buildable in stable APIs.
+- **Diff = theme decorations + CodeLens** (DECISIONS 015): no floating button
+  bar (can't float an interactive widget) and no `−`/`+` gutter glyphs (gutter
+  icons can't follow the theme without hardcoding colours, which UI_UX forbids).
+- **`generateStream` is templated, not `raw`** — the instruct model must apply
+  its chat template to follow the instruction.
+- **Race-safe Esc** — the session is detached before aborting so the streaming
+  loop and live renders bail and can't repaint over the restore.
+
+### Judge Findings Addressed
+
+Approved 27/30, no Critical findings. Both Minor findings fixed before close:
+(1) the two stable-API UI deviations now have DECISIONS entries (014, 015);
+(2) the omitted `−`/`+` gutter glyphs are recorded in DECISIONS 015 (theme-safe
+gutter glyphs aren't achievable without hardcoding colours). A Judge observation
+— a silently failed final restore edit — now logs a warning. Privacy was
+verified directly by the Judge (every `fetch` targets `127.0.0.1:11434`).
+
+### Known Issues
+
+Tracked as Linear issues (Linear is external to this repo — log there):
+- The CMD+K UI is an approximation of UI_UX.md (native input box, CodeLens
+  action bar, no ±gutter glyphs) bounded by stable VS Code APIs — see DECISIONS
+  014/015.
+- The controller's editor-coupled session logic is verified by manual F5, not
+  Vitest (the pure logic it drives — diff, prompt, cleanup — is unit-tested).
+
+No critical issues.
+
+### Current State
+
+Selecting code and pressing ⌘K opens an instruction box; submitting streams the
+rewrite in place, then shows a red/green diff with an Accept/Reject CodeLens.
+⌘↩ keeps it, Esc restores the original exactly (including mid-stream). Not yet
+built: `@codebase` retrieval + the onboarding UI (Phase 6), and packaging
+(Phase 7).
+
+---
+
 ## Phase 4 — Inline Completions
 **Status:** Approved by Judge Agent
 **Judge Score:** 28/30 (see JUDGE_SCORES.md)

@@ -54,6 +54,35 @@
       {
         "command": "localpilot.runSmokeTest",
         "title": "LocalPilot: Run Phase 1 Smoke Test"
+      },
+      {
+        "command": "localpilot.editSelection",
+        "title": "LocalPilot: Edit Selection"
+      },
+      {
+        "command": "localpilot.acceptEdit",
+        "title": "LocalPilot: Accept Edit"
+      },
+      {
+        "command": "localpilot.rejectEdit",
+        "title": "LocalPilot: Reject Edit"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "localpilot.editSelection",
+        "key": "cmd+k",
+        "when": "editorTextFocus && editorHasSelection && !localpilot.cmdkActive"
+      },
+      {
+        "command": "localpilot.acceptEdit",
+        "key": "cmd+enter",
+        "when": "editorTextFocus && localpilot.cmdkActive"
+      },
+      {
+        "command": "localpilot.rejectEdit",
+        "key": "escape",
+        "when": "editorTextFocus && localpilot.cmdkActive"
       }
     ]
   },
