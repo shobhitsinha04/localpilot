@@ -1,12 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 
-import { RECENCY_HALF_LIFE_MS, RERANK_TOP_K } from "../src/constants";
+import * as lancedb from "@lancedb/lancedb";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  MAX_INDEXABLE_FILE_BYTES,
+  RECENCY_HALF_LIFE_MS,
+  RERANK_TOP_K,
+} from "../src/constants";
 import {
   computeRecency,
   computeSimilarity,
+  IndexManager,
   rerank,
   type RerankRow,
 } from "../src/services/indexManager";
+import type { OllamaService } from "../src/services/ollamaService";
+import type { Logger } from "../src/types";
 
 function row(partial: Partial<RerankRow>): RerankRow {
   return {
@@ -94,5 +106,272 @@ describe("rerank", () => {
     expect(out[0].similarity).toBeCloseTo(0.6, 10);
     expect(out[0].recency).toBe(1);
     expect(out[0].score).toBeCloseTo(0.7 * 0.6 + 0.3 * 1, 10);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// IndexManager integration (real LanceDB + temp filesystem, fake embedder)
+//
+// These exercise the storage path the duplicate-chunk fix lives in:
+// indexWorkspace's drop-then-rebuild idempotency and reconcile's mtime diff.
+// The embedder is a deterministic stub (no Ollama needed) that counts calls so
+// we can assert *which* files were re-embedded.
+// ----------------------------------------------------------------------------
+
+const silentLogger: Logger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+/** Deterministic non-zero vector from text, so identical text → identical row. */
+function fakeVector(text: string): number[] {
+  const v = new Array<number>(8).fill(0.01);
+  for (let i = 0; i < text.length; i++) {
+    v[i % 8] += (text.charCodeAt(i) % 13) / 13;
+  }
+  return v;
+}
+
+/** A stub OllamaService exposing only embed(), tracking how many times it ran. */
+function makeEmbedder(): { ollama: OllamaService; calls: () => number } {
+  let calls = 0;
+  const ollama = {
+    embed: (text: string): Promise<number[]> => {
+      calls += 1;
+      return Promise.resolve(fakeVector(text));
+    },
+  };
+  return { ollama: ollama as unknown as OllamaService, calls: () => calls };
+}
+
+interface StoredRow {
+  filename: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+  mtimeMs: number;
+}
+
+describe("IndexManager storage (indexWorkspace + reconcile)", () => {
+  let workspace: string;
+  let storageDir: string;
+  let embedder: ReturnType<typeof makeEmbedder>;
+
+  beforeEach(async () => {
+    workspace = await mkdtemp(path.join(tmpdir(), "lp-ws-"));
+    storageDir = await mkdtemp(path.join(tmpdir(), "lp-store-"));
+    embedder = makeEmbedder();
+  });
+
+  afterEach(async () => {
+    await rm(workspace, { recursive: true, force: true });
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
+  /** Fresh manager bound to the temp workspace — mimics a new activation. */
+  function newManager(): IndexManager {
+    return new IndexManager({
+      ollama: embedder.ollama,
+      storageDir,
+      workspacePath: workspace,
+      embeddingModel: "fake",
+      logger: silentLogger,
+    });
+  }
+
+  /** Write a small (single-chunk) source file into the workspace. */
+  async function writeFileIn(name: string, body: string): Promise<string> {
+    const full = path.join(workspace, name);
+    await writeFile(full, body, "utf8");
+    return full;
+  }
+
+  /** Read every stored row straight from LanceDB, independent of the manager. */
+  async function readRows(hash: string): Promise<StoredRow[]> {
+    const indexDir = path.join(storageDir, "index", hash);
+    const db = await lancedb.connect(indexDir);
+    if (!(await db.tableNames()).includes("chunks")) return [];
+    const table = await db.openTable("chunks");
+    return (await table
+      .query()
+      .select(["filename", "startLine", "endLine", "text", "mtimeMs"])
+      .toArray()) as StoredRow[];
+  }
+
+  /** Set of basenames present in the index (files dedupe nicely by name here). */
+  function names(rows: StoredRow[]): string[] {
+    return [...new Set(rows.map((r) => path.basename(r.filename)))].sort();
+  }
+
+  /** True if any (file, startLine, endLine) triple appears more than once. */
+  function hasDuplicateChunks(rows: StoredRow[]): boolean {
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const key = `${r.filename}:${r.startLine}-${r.endLine}`;
+      if (seen.has(key)) return true;
+      seen.add(key);
+    }
+    return false;
+  }
+
+  // --- A. indexWorkspace idempotency (the duplicate-chunk regression) --------
+
+  it("A1: indexing twice does not stack duplicate copies", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+    await writeFileIn("b.ts", "export const b = 2;\n");
+
+    const first = newManager();
+    const stats1 = await first.indexWorkspace();
+    const rows1 = await readRows(first.workspaceHash);
+    expect(rows1.length).toBe(stats1.chunkCount);
+    expect(rows1.length).toBeGreaterThan(0);
+
+    // A fresh manager mimics a second activation on the same workspace.
+    const second = newManager();
+    await second.indexWorkspace();
+    const rows2 = await readRows(second.workspaceHash);
+
+    expect(rows2.length).toBe(rows1.length); // not doubled
+    expect(hasDuplicateChunks(rows2)).toBe(false);
+  });
+
+  it("A3: re-indexing reflects a deleted file (rebuild, not append)", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+    const bPath = await writeFileIn("b.ts", "export const b = 2;\n");
+
+    const m1 = newManager();
+    await m1.indexWorkspace();
+    expect(names(await readRows(m1.workspaceHash))).toEqual(["a.ts", "b.ts"]);
+
+    await rm(bPath);
+    const m2 = newManager();
+    await m2.indexWorkspace();
+    expect(names(await readRows(m2.workspaceHash))).toEqual(["a.ts"]);
+  });
+
+  // --- B. reconcile incremental diff ----------------------------------------
+
+  it("B4: reconcile on an empty index indexes everything", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+    await writeFileIn("b.ts", "export const b = 2;\n");
+
+    const m = newManager();
+    const stats = await m.reconcile();
+    const rows = await readRows(m.workspaceHash);
+
+    expect(stats.chunkCount).toBeGreaterThan(0);
+    expect(names(rows)).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("B5: reconcile on an unchanged workspace re-embeds nothing", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+    await writeFileIn("b.ts", "export const b = 2;\n");
+
+    const m1 = newManager();
+    await m1.reconcile();
+    const before = await readRows(m1.workspaceHash);
+
+    const callsAfterFirst = embedder.calls();
+    const m2 = newManager();
+    await m2.reconcile();
+    const after = await readRows(m2.workspaceHash);
+
+    expect(embedder.calls()).toBe(callsAfterFirst); // zero new embeds
+    expect(after.length).toBe(before.length);
+    expect(hasDuplicateChunks(after)).toBe(false);
+  });
+
+  it("B6: editing a file re-embeds only that file", async () => {
+    const aPath = await writeFileIn("a.ts", "export const a = 1;\n");
+    await writeFileIn("b.ts", "export const b = 2;\n");
+
+    const m1 = newManager();
+    await m1.reconcile();
+    const baseline = embedder.calls();
+
+    // Change content and force a distinct (future) mtime.
+    await writeFile(aPath, "export const a = 999;\n", "utf8");
+    const future = new Date(Date.now() + 60_000);
+    await utimes(aPath, future, future);
+
+    const m2 = newManager();
+    await m2.reconcile();
+    const rows = await readRows(m2.workspaceHash);
+
+    expect(embedder.calls() - baseline).toBe(1); // only a.ts (single chunk)
+    const aRow = rows.find((r) => path.basename(r.filename) === "a.ts");
+    expect(aRow?.text).toContain("999");
+    expect(hasDuplicateChunks(rows)).toBe(false);
+  });
+
+  it("B7: a newly added file is picked up by reconcile", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+
+    const m1 = newManager();
+    await m1.reconcile();
+    const baseline = embedder.calls();
+
+    await writeFileIn("c.ts", "export const c = 3;\n");
+    const m2 = newManager();
+    await m2.reconcile();
+
+    expect(embedder.calls() - baseline).toBe(1); // only the new file
+    expect(names(await readRows(m2.workspaceHash))).toEqual(["a.ts", "c.ts"]);
+  });
+
+  it("B8: a file deleted while inactive is purged by reconcile", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+    const bPath = await writeFileIn("b.ts", "export const b = 2;\n");
+
+    const m1 = newManager();
+    await m1.reconcile();
+    expect(names(await readRows(m1.workspaceHash))).toEqual(["a.ts", "b.ts"]);
+
+    await rm(bPath); // simulate an offline deletion the watcher never saw
+    const m2 = newManager();
+    await m2.reconcile();
+    expect(names(await readRows(m2.workspaceHash))).toEqual(["a.ts"]);
+  });
+
+  it("B9: an mtime moved backwards still triggers a re-index", async () => {
+    const aPath = await writeFileIn("a.ts", "export const a = 1;\n");
+
+    const m1 = newManager();
+    await m1.reconcile();
+    const baseline = embedder.calls();
+
+    // A checkout/restore can set an *older* mtime — a `> stored` check would
+    // miss this; the implementation uses `!==`.
+    await writeFile(aPath, "export const a = 42;\n", "utf8");
+    const past = new Date("2001-01-01T00:00:00Z");
+    await utimes(aPath, past, past);
+
+    const m2 = newManager();
+    await m2.reconcile();
+    const rows = await readRows(m2.workspaceHash);
+
+    expect(embedder.calls() - baseline).toBe(1);
+    const aRow = rows.find((r) => path.basename(r.filename) === "a.ts");
+    expect(aRow?.text).toContain("42");
+  });
+
+  // --- C. helper behavior, observed through the public API ------------------
+
+  it("B10/C: a file over the size limit is excluded and never retried", async () => {
+    await writeFileIn("a.ts", "export const a = 1;\n");
+    const big = "// big\n" + "x".repeat(MAX_INDEXABLE_FILE_BYTES + 1024);
+    await writeFileIn("big.ts", big);
+
+    const m1 = newManager();
+    await m1.reconcile();
+    expect(names(await readRows(m1.workspaceHash))).toEqual(["a.ts"]);
+
+    // Second pass must not keep retrying the oversized file (scan size-guards it).
+    const baseline = embedder.calls();
+    const m2 = newManager();
+    await m2.reconcile();
+    expect(embedder.calls()).toBe(baseline);
+    expect(names(await readRows(m2.workspaceHash))).toEqual(["a.ts"]);
   });
 });
