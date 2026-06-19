@@ -82,6 +82,39 @@ function hideEmptyState(): void {
   emptyState.style.display = "none";
 }
 
+// --- @codebase retrieval status --------------------------------------------
+let retrievalEl: HTMLElement | null = null;
+
+/** Show "Searching codebase…" while the host runs the RAG retrieval. */
+function showRetrievalStatus(): void {
+  hideEmptyState();
+  retrievalEl = document.createElement("div");
+  retrievalEl.className = "retrieval";
+  retrievalEl.innerHTML =
+    '<span class="retrieval-spinner" aria-hidden="true"></span>' +
+    '<span class="retrieval-text">Searching codebase…</span>';
+  conversation.appendChild(retrievalEl);
+  scrollToBottom(true);
+}
+
+/** Swap the status for the retrieved-file chips (or a "none found" note). */
+function showRetrievalResult(files: string[]): void {
+  if (!retrievalEl) return;
+  if (files.length === 0) {
+    retrievalEl.innerHTML =
+      '<span class="retrieval-text">No relevant files found.</span>';
+  } else {
+    const chips = files
+      .map((f) => `<span class="file-chip">${escapeHtml(f)}</span>`)
+      .join("");
+    retrievalEl.innerHTML =
+      '<span class="retrieval-text">Searched codebase</span>' +
+      `<span class="file-chips">${chips}</span>`;
+  }
+  // Detach so the chips stay in the transcript above the streamed answer.
+  retrievalEl = null;
+}
+
 // --- message bubbles --------------------------------------------------------
 function addUserBubble(text: string): void {
   hideEmptyState();
@@ -353,6 +386,12 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
     case "init":
       modelName.textContent = msg.model;
       autocompleteToggle.checked = msg.autocompleteEnabled;
+      break;
+    case "retrievalStart":
+      showRetrievalStatus();
+      break;
+    case "retrievalComplete":
+      showRetrievalResult(msg.files);
       break;
     case "streamStart":
       setGenerating(true);

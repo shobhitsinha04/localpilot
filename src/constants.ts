@@ -214,6 +214,18 @@ export const CHAT_SYSTEM_PROMPT =
   "You are a coding assistant. You have access to the user's current file. " +
   "Answer concisely and accurately.";
 
+/**
+ * System prompt for an @codebase chat turn (DATA_FLOW.md §4). Used instead of
+ * CHAT_SYSTEM_PROMPT when retrieved code context is attached to the message.
+ */
+export const CODEBASE_SYSTEM_PROMPT =
+  "You are a coding assistant with access to the user's codebase. Use the " +
+  "provided code context to answer accurately. Cite file names when " +
+  "referencing specific code.";
+
+/** The token a user types in chat to trigger codebase retrieval. */
+export const CODEBASE_TOKEN = "@codebase";
+
 /** Chat sampling options (DATA_FLOW.md §3: temperature 0.7, top_p 0.95). */
 export const CHAT_TEMPERATURE = 0.7;
 export const CHAT_TOP_P = 0.95;

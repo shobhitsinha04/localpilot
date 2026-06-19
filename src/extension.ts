@@ -3,10 +3,14 @@ import * as vscode from "vscode";
 import { ChatViewProvider } from "./chatViewProvider";
 import { CmdKController } from "./cmdkController";
 import { CompletionProvider } from "./completionProvider";
-import { COMPLETION_KEEP_ALIVE, COMPLETION_LANGUAGES } from "./constants";
+import {
+  COMPLETION_KEEP_ALIVE,
+  COMPLETION_LANGUAGES,
+  EMBEDDING_MODEL,
+} from "./constants";
+import { ContextService } from "./contextService";
 import { ConfigManager } from "./services/configManager";
 import { HardwareDetector, modelsForTier } from "./services/hardwareDetector";
-import { IndexManager } from "./services/indexManager";
 import { OllamaService } from "./services/ollamaService";
 import type { IndexStats, Logger } from "./types";
 
@@ -47,15 +51,38 @@ export function activate(context: vscode.ExtensionContext): void {
   // chat-panel autocomplete toggle reaches the provider without a reload.
   const config = new ConfigManager(context.globalStorageUri.fsPath, logger);
 
+  // The single context seam (DECISIONS 016): owns the one IndexManager and the
+  // active-file context. Built with the canonical embedding model so it needn't
+  // wait for the smoke test's hardware detection. Absent when no folder is open;
+  // @codebase and indexing then degrade gracefully. Shared by chat, the
+  // activation index step, the watcher, and the Rebuild Index command.
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const contextService = folder
+    ? new ContextService({
+        ollama,
+        storageDir: context.globalStorageUri.fsPath,
+        workspacePath: folder.uri.fsPath,
+        embeddingModel: EMBEDDING_MODEL,
+        logger,
+      })
+    : undefined;
+
   context.subscriptions.push(
     vscode.commands.registerCommand("localpilot.helloWorld", () => {
       vscode.window.showInformationMessage("Hello World from LocalPilot!");
     }),
     vscode.commands.registerCommand("localpilot.runSmokeTest", () => {
-      void runSmokeTest(context, logger, channel, ollama, config);
+      void runSmokeTest(
+        context,
+        logger,
+        channel,
+        ollama,
+        config,
+        contextService,
+      );
     }),
     vscode.commands.registerCommand("localpilot.rebuildIndex", () => {
-      void runForceRebuild(context, logger, channel, ollama, config);
+      void runForceRebuild(logger, channel, config, contextService);
     }),
   );
 
@@ -65,6 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ollama,
     config,
     logger,
+    contextService,
   );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -77,7 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // Track the active editor so chat keeps the current-file context even while
     // the chat input is focused (which clears window.activeTextEditor).
     vscode.window.onDidChangeActiveTextEditor((editor) =>
-      chatProvider.noteActiveEditor(editor),
+      contextService?.noteActiveEditor(editor),
     ),
   );
 
@@ -99,7 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Fire-and-forget so a long model pull never blocks VS Code activation.
-  void runSmokeTest(context, logger, channel, ollama, config);
+  void runSmokeTest(context, logger, channel, ollama, config, contextService);
 }
 
 export function deactivate(): void {
@@ -137,6 +165,7 @@ async function runSmokeTest(
   channel: vscode.OutputChannel,
   ollama: OllamaService,
   config: ConfigManager,
+  contextService: ContextService | undefined,
 ): Promise<void> {
   if (smokeTestInFlight) {
     logger.warn("Smoke test already running; ignoring duplicate trigger.");
@@ -249,6 +278,7 @@ async function runSmokeTest(
       config,
       ollama,
       models.embedding,
+      contextService,
     );
   } catch (err) {
     logger.error("Phase 1 smoke test failed", err);
@@ -272,9 +302,10 @@ async function runIndexingSmokeTest(
   config: ConfigManager,
   ollama: OllamaService,
   embeddingModel: string,
+  contextService: ContextService | undefined,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
+  if (!folder || !contextService) {
     logger.warn("No workspace folder open; skipping the indexing smoke test.");
     return;
   }
@@ -291,18 +322,10 @@ async function runIndexingSmokeTest(
   });
   logger.info(`Embedding model ready: ${embeddingModel}`);
 
-  const indexManager = new IndexManager({
-    ollama,
-    storageDir: context.globalStorageUri.fsPath,
-    workspacePath: folder.uri.fsPath,
-    embeddingModel,
-    logger,
-  });
-
   logger.info(`Reconciling index for workspace ${folder.uri.fsPath}...`);
   // Reconcile (not a full re-index): picks up edits/additions/deletions made
   // while the extension was inactive, and re-embeds only the changed files.
-  const stats = await indexManager.reconcile((progress) => {
+  const stats = await contextService.reconcile((progress) => {
     if (progress.current === progress.total || progress.current % 10 === 0) {
       logger.info(`  indexed ${progress.current}/${progress.total} files`);
     }
@@ -317,7 +340,7 @@ async function runIndexingSmokeTest(
 
   // Run a sample query and log the top hits.
   const query = "where to see the color of the links";
-  const hits = await indexManager.search(query);
+  const hits = await contextService.retrieve(query);
   logger.info(`Top ${Math.min(3, hits.length)} chunks for "${query}":`);
   hits.slice(0, 3).forEach((hit, i) => {
     const rel = vscode.workspace.asRelativePath(hit.filename);
@@ -327,7 +350,7 @@ async function runIndexingSmokeTest(
     );
   });
 
-  registerIndexWatcher(context, logger, indexManager);
+  registerIndexWatcher(context, logger, contextService);
   logger.info("Phase 2 indexing smoke test complete. ✓");
 }
 
@@ -358,11 +381,10 @@ async function recordIndexState(
  * surface in the Output Channel and a notification.
  */
 async function runForceRebuild(
-  context: vscode.ExtensionContext,
   logger: Logger,
   channel: vscode.OutputChannel,
-  ollama: OllamaService,
   config: ConfigManager,
+  contextService: ContextService | undefined,
 ): Promise<void> {
   if (rebuildInFlight) {
     void vscode.window.showInformationMessage(
@@ -371,19 +393,9 @@ async function runForceRebuild(
     return;
   }
 
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
+  if (!contextService) {
     void vscode.window.showWarningMessage(
       "LocalPilot: open a workspace folder before rebuilding the index.",
-    );
-    return;
-  }
-
-  await config.load();
-  const embeddingModel = config.get().embeddingModel;
-  if (!embeddingModel) {
-    void vscode.window.showWarningMessage(
-      "LocalPilot: no embedding model configured yet — let activation finish first.",
     );
     return;
   }
@@ -391,14 +403,9 @@ async function runForceRebuild(
   rebuildInFlight = true;
   channel.show(true);
   try {
-    const indexManager = new IndexManager({
-      ollama,
-      storageDir: context.globalStorageUri.fsPath,
-      workspacePath: folder.uri.fsPath,
-      embeddingModel,
-      logger,
-    });
-
+    // The command can run before activation's smoke test loaded config; ensure
+    // the cache is populated so recordIndexState merges rather than overwrites.
+    await config.load();
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -406,8 +413,8 @@ async function runForceRebuild(
         cancellable: false,
       },
       async (report) => {
-        logger.info(`Force-rebuilding index for ${folder.uri.fsPath}...`);
-        const stats = await indexManager.indexWorkspace((progress) => {
+        logger.info("Force-rebuilding workspace index...");
+        const stats = await contextService.indexWorkspace((progress) => {
           if (
             progress.current === progress.total ||
             progress.current % 10 === 0
@@ -528,14 +535,14 @@ async function registerCompletionProvider(
 function registerIndexWatcher(
   context: vscode.ExtensionContext,
   logger: Logger,
-  indexManager: IndexManager,
+  contextService: ContextService,
 ): void {
   if (indexWatcherRegistered) return;
   indexWatcherRegistered = true;
 
   const watcher = vscode.workspace.createFileSystemWatcher("**/*");
   const update = (uri: vscode.Uri): void => {
-    void indexManager
+    void contextService
       .updateFile(uri.fsPath)
       .catch((err) =>
         logger.warn(`Index update failed for ${uri.fsPath}: ${String(err)}`),
@@ -544,7 +551,7 @@ function registerIndexWatcher(
   watcher.onDidCreate(update);
   watcher.onDidChange(update);
   watcher.onDidDelete((uri) => {
-    void indexManager
+    void contextService
       .deleteFile(uri.fsPath)
       .catch((err) =>
         logger.warn(`Index delete failed for ${uri.fsPath}: ${String(err)}`),

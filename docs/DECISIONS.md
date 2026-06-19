@@ -434,3 +434,73 @@ The literal `−`/`+` gutter prefixes that section lists are **not** rendered.
   and theme-correct; the floating bar and ±gutter glyphs are the cosmetic gap.
 - Accept (⌘↩) / Reject (Esc) also work via keybindings scoped to
   `localpilot.cmdkActive`.
+
+---
+
+### 016 — A `ContextService` owns the single IndexManager + active-file context
+
+**Decision:** Introduce `src/contextService.ts` — a `vscode`-coupled service
+that owns the one `IndexManager` instance for the workspace and the active-file
+context gathering (`gatherFileContext` + the `lastEditor` tracking moved out of
+`ChatViewProvider`). It is constructed once in `activate()` and injected into
+`ChatViewProvider`, the activation indexing step, the incremental file watcher,
+and the Rebuild Index command, so every feature shares one index handle. This
+realises DATA_FLOW.md's "Context Service", which the spec already attributes
+both automatic file context (§3) and `@codebase` RAG retrieval (§4) to.
+
+**Date:** 2026-06-17
+
+**Why:** Before Phase 6 the `IndexManager` was a local created inside the
+activation smoke test and nothing else could reach it; `@codebase` in chat needs
+the same index the watcher updates. A single owned instance avoids two managers
+racing on one LanceDB directory and gives chat a clean seam to retrieve through.
+It lives at `src/` (not `src/services/`), matching the project convention that
+`vscode`-coupled code sits at the `src/` root (like `chatViewProvider.ts`,
+`cmdkController.ts`) while `src/services/` stays `vscode`-free and unit-testable.
+The pure retrieval logic (`@codebase` token parsing, context-block formatting,
+`buildCodebaseChatPrompt`) stays in `PromptEngine` so it remains unit-tested.
+
+**Alternatives considered:**
+- Inject the `IndexManager` directly into `ChatViewProvider`. Fewer new files,
+  but leaks the index lifecycle into the view layer and leaves `gatherFileContext`
+  split from retrieval; rejected for a clean single context seam.
+- Put `ContextService` in `src/services/` and keep it `vscode`-free. Would force
+  `gatherFileContext` (inherently editor-coupled) to stay in the provider,
+  splitting the spec's single "Context Service" in two; rejected.
+
+**Consequences:**
+- `ChatViewProvider` no longer owns `gatherFileContext`/`lastEditor`; it calls
+  the injected `ContextService`. `extension.ts` wires
+  `onDidChangeActiveTextEditor` to the service.
+- `ContextService` is constructed with the canonical `EMBEDDING_MODEL` constant,
+  so it does not have to wait for the smoke test's hardware detection to build.
+- When no workspace folder is open the service is absent and `@codebase` reports
+  that gracefully rather than throwing.
+
+---
+
+### 017 — Onboarding is a mode of the chat webview, not a separate view
+
+**Decision:** The Phase 6 onboarding flow renders inside the existing chat
+sidebar webview as a distinct mode, swapping to the normal chat UI once
+`onboardingComplete` is set — rather than registering a second, dedicated
+onboarding `WebviewView`.
+
+**Date:** 2026-06-17
+
+**Why:** ONBOARDING_FLOW.md describes "the sidebar panel opens automatically"
+and ends by dismissing onboarding to reveal "the normal chat panel" — i.e. one
+panel with two states. A single view means one HTML/CSP setup, one esbuild
+webview bundle, and no second registration/lifecycle to manage; the chat
+provider already owns the only sidebar view.
+
+**Alternatives considered:**
+- A separate dedicated onboarding `WebviewView` disposed on completion. Cleaner
+  separation of concerns, but a second bundle, a second CSP/nonce surface, and
+  extra activation wiring for a one-time flow; rejected for v1.
+
+**Consequences:**
+- `ChatViewProvider` gains an onboarding render mode and gates chat behind
+  `onboardingComplete` (implemented in Phase 6 WP2).
+- This decision is recorded now (with the WP1 `ContextService` seam) but its
+  UI is built in WP2.

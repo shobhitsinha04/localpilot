@@ -2,6 +2,7 @@ import {
   CHAT_SYSTEM_PROMPT,
   CHAT_TEMPERATURE,
   CHAT_TOP_P,
+  CODEBASE_SYSTEM_PROMPT,
   COMPLETION_STOP,
   COMPLETION_TEMPERATURE,
   COMPLETION_TOP_P,
@@ -9,7 +10,47 @@ import {
   EDIT_TOP_P,
   MAX_HISTORY_MESSAGES,
 } from "../constants";
-import type { ChatMessage, FileContext, OllamaRequestOptions } from "../types";
+import type {
+  ChatMessage,
+  FileContext,
+  OllamaRequestOptions,
+  RetrievedChunk,
+} from "../types";
+
+/** Matches the @codebase trigger token as a whole word, anywhere in the text. */
+const CODEBASE_TOKEN_RE = /(^|\s)@codebase\b/i;
+
+/**
+ * Detect the @codebase trigger and strip every occurrence, returning the
+ * cleaned natural-language query (DATA_FLOW.md §4 step 1). The token may appear
+ * anywhere — the empty-state chips put it both leading and trailing. Pure and
+ * `vscode`-free so it is unit-tested directly.
+ */
+export function parseCodebaseQuery(text: string): {
+  isCodebase: boolean;
+  query: string;
+} {
+  if (!CODEBASE_TOKEN_RE.test(text)) return { isCodebase: false, query: text };
+  const query = text
+    .replace(/@codebase/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { isCodebase: true, query };
+}
+
+/**
+ * Render retrieved chunks into the labelled context block of DATA_FLOW.md §4:
+ * `// File: <name> (lines a-b)` followed by the chunk text. The caller passes
+ * chunks with display-friendly (relative) filenames.
+ */
+export function formatCodebaseContext(chunks: RetrievedChunk[]): string {
+  return chunks
+    .map(
+      (c) =>
+        `// File: ${c.filename} (lines ${c.startLine}-${c.endLine})\n${c.text}`,
+    )
+    .join("\n\n");
+}
 
 // Qwen2.5-Coder fill-in-the-middle (FIM) special tokens. The model is trained
 // to predict the code at <|fim_middle|> given the surrounding prefix and suffix.
@@ -67,6 +108,33 @@ export class PromptEngine {
 
     return [
       { role: "system", content: system },
+      ...history.slice(-MAX_HISTORY_MESSAGES),
+      { role: "user", content: userMessage },
+    ];
+  }
+
+  /**
+   * Build the chat message array for an @codebase turn (DATA_FLOW.md §4): the
+   * codebase system prompt, the retrieved code context block, the current file
+   * context (if any), the trimmed history, then the user question (with the
+   * @codebase token already stripped). Empty context blocks are omitted.
+   */
+  buildCodebaseChatPrompt(
+    userMessage: string,
+    history: ChatMessage[],
+    codebaseContext: string,
+    fileContext?: FileContext,
+  ): ChatMessage[] {
+    const parts = [CODEBASE_SYSTEM_PROMPT];
+    if (codebaseContext.trim().length > 0) {
+      parts.push(
+        `Relevant code from the user's project:\n\n${codebaseContext}`,
+      );
+    }
+    if (fileContext) parts.push(formatFileContext(fileContext));
+
+    return [
+      { role: "system", content: parts.join("\n\n") },
       ...history.slice(-MAX_HISTORY_MESSAGES),
       { role: "user", content: userMessage },
     ];

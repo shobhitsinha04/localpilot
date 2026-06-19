@@ -19,6 +19,8 @@ export type WebviewMessage =
 /** Messages the extension host sends to the webview. */
 export type HostMessage =
   | { type: "init"; model: string; autocompleteEnabled: boolean }
+  | { type: "retrievalStart" }
+  | { type: "retrievalComplete"; files: string[] }
   | { type: "streamStart" }
   | { type: "streamToken"; token: string }
   | { type: "streamEnd" }

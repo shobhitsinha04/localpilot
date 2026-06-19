@@ -1,11 +1,15 @@
 import * as vscode from "vscode";
 
-import { MAX_CONTEXT_FILE_LINES } from "./constants";
+import type { ContextService } from "./contextService";
 import { ConversationManager } from "./services/conversationManager";
 import { OllamaError, type OllamaService } from "./services/ollamaService";
-import { PromptEngine } from "./services/promptEngine";
+import {
+  formatCodebaseContext,
+  parseCodebaseQuery,
+  PromptEngine,
+} from "./services/promptEngine";
 import type { ConfigManager } from "./services/configManager";
-import type { FileContext, Logger } from "./types";
+import type { ChatMessage, Logger, RetrievedChunk } from "./types";
 import {
   parseWebviewMessage,
   type ErrorAction,
@@ -28,26 +32,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private currentRequest?: AbortController;
   /** The last message the user sent, re-sent by the "Retry" error action. */
   private pendingMessage?: string;
-  /**
-   * The most recent text editor the user worked in. Tracked because focusing
-   * the chat webview clears `window.activeTextEditor`, which would otherwise
-   * lose the current-file context (FEATURES.md §3).
-   */
-  private lastEditor?: vscode.TextEditor;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly ollama: OllamaService,
     private readonly config: ConfigManager,
     private readonly logger: Logger,
-  ) {
-    this.lastEditor = vscode.window.activeTextEditor;
-  }
-
-  /** Record the active editor so chat keeps its file context when focused. */
-  noteActiveEditor(editor: vscode.TextEditor | undefined): void {
-    if (editor) this.lastEditor = editor;
-  }
+    /** Shared context seam — absent when no workspace folder is open. */
+    private readonly context?: ContextService,
+  ) {}
 
   async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
     this.view = view;
@@ -128,15 +121,84 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Build the prompt from the prior history, then record this user turn.
-    const fileContext = this.gatherFileContext();
-    const messages = this.prompt.buildChatPrompt(
-      text,
+    const { isCodebase, query } = parseCodebaseQuery(text);
+    const fileContext = this.context?.gatherFileContext();
+
+    // Build the prompt from the prior history, then record this user turn. For
+    // @codebase, the model sees the cleaned query (token stripped) — that is
+    // what we store in history so later turns stay consistent.
+    let messages: ChatMessage[];
+    if (isCodebase) {
+      const built = await this.buildCodebasePrompt(query, fileContext);
+      if (!built) return; // an inline notice was already posted
+      messages = built;
+      this.conversation.addUser(query);
+    } else {
+      messages = this.prompt.buildChatPrompt(
+        text,
+        this.conversation.getHistory(),
+        fileContext,
+      );
+      this.conversation.addUser(text);
+    }
+
+    await this.streamAssistant(messages, model);
+  }
+
+  /**
+   * Run the @codebase retrieval pipeline (DATA_FLOW.md §4) and assemble the
+   * prompt. Posts retrieval status + file chips to the webview. Returns null
+   * (after posting an inline notice) when the request can't proceed — no
+   * workspace, an empty query, or an index that isn't ready.
+   */
+  private async buildCodebasePrompt(
+    query: string,
+    fileContext: ReturnType<NonNullable<ContextService["gatherFileContext"]>>,
+  ): Promise<ChatMessage[] | null> {
+    if (!this.context) {
+      this.postError("Open a workspace folder to search your codebase.");
+      return null;
+    }
+    if (query.length === 0) {
+      this.postError("Add a question after @codebase.");
+      return null;
+    }
+    if (!(await this.context.isIndexed())) {
+      this.postError(
+        "Your codebase isn't indexed yet — it may still be indexing. Try again shortly.",
+        "retry",
+      );
+      return null;
+    }
+
+    this.post({ type: "retrievalStart" });
+    let chunks: RetrievedChunk[] = [];
+    try {
+      chunks = await this.context.retrieve(query);
+    } catch (err) {
+      this.logger.error("Codebase retrieval failed", err);
+    }
+    // Show relative paths to the user and the model.
+    const relChunks = chunks.map((c) => ({
+      ...c,
+      filename: vscode.workspace.asRelativePath(c.filename),
+    }));
+    const files = [...new Set(relChunks.map((c) => c.filename))];
+    this.post({ type: "retrievalComplete", files });
+
+    return this.prompt.buildCodebaseChatPrompt(
+      query,
       this.conversation.getHistory(),
+      formatCodebaseContext(relChunks),
       fileContext,
     );
-    this.conversation.addUser(text);
+  }
 
+  /** Stream a model response into the webview and record it on success. */
+  private async streamAssistant(
+    messages: ChatMessage[],
+    model: string,
+  ): Promise<void> {
     this.post({ type: "streamStart" });
     const request = new AbortController();
     this.currentRequest = request;
@@ -182,22 +244,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         "Couldn't restart LocalPilot. Check that Ollama is installed.",
       );
     }
-  }
-
-  /** Automatic context from the active editor (FEATURES.md §3). */
-  private gatherFileContext(): FileContext | undefined {
-    const editor = vscode.window.activeTextEditor ?? this.lastEditor;
-    if (!editor) return undefined;
-    const doc = editor.document;
-    const withinLimit = doc.lineCount <= MAX_CONTEXT_FILE_LINES;
-    const selection = editor.selection;
-    return {
-      filename: vscode.workspace.asRelativePath(doc.uri),
-      languageId: doc.languageId,
-      content: withinLimit ? doc.getText() : undefined,
-      cursorLine: selection.active.line + 1,
-      selectedText: selection.isEmpty ? undefined : doc.getText(selection),
-    };
   }
 
   private friendlyError(err: unknown): string {

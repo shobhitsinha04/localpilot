@@ -4,6 +4,7 @@ import {
   CHAT_SYSTEM_PROMPT,
   CHAT_TEMPERATURE,
   CHAT_TOP_P,
+  CODEBASE_SYSTEM_PROMPT,
   COMPLETION_STOP,
   COMPLETION_TEMPERATURE,
   COMPLETION_TOP_P,
@@ -11,8 +12,25 @@ import {
   EDIT_TOP_P,
   MAX_HISTORY_MESSAGES,
 } from "../src/constants";
-import { PromptEngine } from "../src/services/promptEngine";
-import type { ChatMessage, FileContext } from "../src/types";
+import {
+  formatCodebaseContext,
+  parseCodebaseQuery,
+  PromptEngine,
+} from "../src/services/promptEngine";
+import type { ChatMessage, FileContext, RetrievedChunk } from "../src/types";
+
+function chunk(partial: Partial<RetrievedChunk>): RetrievedChunk {
+  return {
+    filename: "src/a.ts",
+    startLine: 1,
+    endLine: 10,
+    text: "code",
+    similarity: 0.9,
+    recency: 0.5,
+    score: 0.8,
+    ...partial,
+  };
+}
 
 const engine = new PromptEngine();
 
@@ -195,5 +213,106 @@ describe("PromptEngine.editOptions", () => {
       temperature: EDIT_TEMPERATURE,
       top_p: EDIT_TOP_P,
     });
+  });
+});
+
+describe("parseCodebaseQuery", () => {
+  it("reports a non-@codebase message unchanged", () => {
+    expect(parseCodebaseQuery("how does auth work")).toEqual({
+      isCodebase: false,
+      query: "how does auth work",
+    });
+  });
+
+  it("detects and strips a leading @codebase token", () => {
+    expect(parseCodebaseQuery("@codebase how does auth work")).toEqual({
+      isCodebase: true,
+      query: "how does auth work",
+    });
+  });
+
+  it("detects and strips a trailing @codebase token", () => {
+    expect(parseCodebaseQuery("how does auth work? @codebase")).toEqual({
+      isCodebase: true,
+      query: "how does auth work?",
+    });
+  });
+
+  it("is case-insensitive and collapses the leftover whitespace", () => {
+    expect(parseCodebaseQuery("find  @CodeBase  the parser")).toEqual({
+      isCodebase: true,
+      query: "find the parser",
+    });
+  });
+
+  it("yields an empty query when only the token is present", () => {
+    expect(parseCodebaseQuery("@codebase")).toEqual({
+      isCodebase: true,
+      query: "",
+    });
+  });
+
+  it("does not match @codebase as a substring of another word", () => {
+    expect(parseCodebaseQuery("the @codebases array").isCodebase).toBe(false);
+  });
+});
+
+describe("formatCodebaseContext", () => {
+  it("labels each chunk with its file and line range", () => {
+    const out = formatCodebaseContext([
+      chunk({ filename: "src/a.ts", startLine: 1, endLine: 4, text: "AAA" }),
+      chunk({ filename: "src/b.ts", startLine: 7, endLine: 9, text: "BBB" }),
+    ]);
+    expect(out).toBe(
+      "// File: src/a.ts (lines 1-4)\nAAA\n\n// File: src/b.ts (lines 7-9)\nBBB",
+    );
+  });
+
+  it("returns an empty string for no chunks", () => {
+    expect(formatCodebaseContext([])).toBe("");
+  });
+});
+
+describe("PromptEngine.buildCodebaseChatPrompt", () => {
+  it("uses the codebase system prompt with the context block, history, and query", () => {
+    const history: ChatMessage[] = [{ role: "user", content: "earlier" }];
+    const out = engine.buildCodebaseChatPrompt(
+      "how does auth work",
+      history,
+      "// File: src/auth.ts (lines 1-3)\ncode",
+    );
+    expect(out[0].role).toBe("system");
+    expect(out[0].content).toContain(CODEBASE_SYSTEM_PROMPT);
+    expect(out[0].content).toContain("// File: src/auth.ts (lines 1-3)");
+    expect(out[1]).toEqual({ role: "user", content: "earlier" });
+    expect(out[out.length - 1]).toEqual({
+      role: "user",
+      content: "how does auth work",
+    });
+  });
+
+  it("omits the context block when no chunks were retrieved", () => {
+    const out = engine.buildCodebaseChatPrompt("q", [], "");
+    expect(out[0].content).toBe(CODEBASE_SYSTEM_PROMPT);
+  });
+
+  it("appends the current file context when provided", () => {
+    const fc: FileContext = {
+      filename: "src/x.ts",
+      languageId: "typescript",
+      content: "export const x = 1;",
+    };
+    const out = engine.buildCodebaseChatPrompt("q", [], "ctx", fc);
+    expect(out[0].content).toContain("src/x.ts");
+  });
+
+  it("trims history to the most recent MAX_HISTORY_MESSAGES", () => {
+    const history: ChatMessage[] = Array.from(
+      { length: MAX_HISTORY_MESSAGES + 6 },
+      (_, i) => ({ role: "user", content: `m${i}` }) as ChatMessage,
+    );
+    const out = engine.buildCodebaseChatPrompt("q", history, "ctx");
+    // system + trimmed history + final user message.
+    expect(out.length).toBe(MAX_HISTORY_MESSAGES + 2);
   });
 });
