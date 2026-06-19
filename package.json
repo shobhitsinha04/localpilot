@@ -66,6 +66,10 @@
       {
         "command": "localpilot.rejectEdit",
         "title": "LocalPilot: Reject Edit"
+      },
+      {
+        "command": "localpilot.rebuildIndex",
+        "title": "LocalPilot: Rebuild Index"
       }
     ],
     "keybindings": [

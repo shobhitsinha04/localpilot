@@ -8,7 +8,7 @@ import { ConfigManager } from "./services/configManager";
 import { HardwareDetector, modelsForTier } from "./services/hardwareDetector";
 import { IndexManager } from "./services/indexManager";
 import { OllamaService } from "./services/ollamaService";
-import type { Logger } from "./types";
+import type { IndexStats, Logger } from "./types";
 
 // Phase 1 — Ollama Integration + Hardware Detection, Phase 2 — Codebase
 // Indexing, Phase 3 — Sidebar Chat, Phase 4 — Inline Completions (PHASES.md).
@@ -29,6 +29,8 @@ let smokeTestInFlight = false;
 let indexWatcherRegistered = false;
 /** Set once the inline-completion provider has been registered. */
 let completionProviderRegistered = false;
+/** Guards against overlapping force-rebuilds of the index. */
+let rebuildInFlight = false;
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = vscode.window.createOutputChannel("LocalPilot");
@@ -51,6 +53,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("localpilot.runSmokeTest", () => {
       void runSmokeTest(context, logger, channel, ollama, config);
+    }),
+    vscode.commands.registerCommand("localpilot.rebuildIndex", () => {
+      void runForceRebuild(context, logger, channel, ollama, config);
     }),
   );
 
@@ -308,19 +313,10 @@ async function runIndexingSmokeTest(
   );
 
   // Record index state in config.json (workspaceIndexes keyed by hash).
-  await config.update({
-    workspaceIndexes: {
-      ...config.get().workspaceIndexes,
-      [stats.workspaceHash]: {
-        indexed: true,
-        fileCount: stats.fileCount,
-        workspaceHash: stats.workspaceHash,
-      },
-    },
-  });
+  await recordIndexState(config, stats);
 
   // Run a sample query and log the top hits.
-  const query = "how to estimate the reading time";
+  const query = "where to see the color of the links";
   const hits = await indexManager.search(query);
   logger.info(`Top ${Math.min(3, hits.length)} chunks for "${query}":`);
   hits.slice(0, 3).forEach((hit, i) => {
@@ -333,6 +329,114 @@ async function runIndexingSmokeTest(
 
   registerIndexWatcher(context, logger, indexManager);
   logger.info("Phase 2 indexing smoke test complete. ✓");
+}
+
+/** Persist a workspace's index state in config.json (keyed by workspace hash). */
+async function recordIndexState(
+  config: ConfigManager,
+  stats: IndexStats,
+): Promise<void> {
+  await config.update({
+    workspaceIndexes: {
+      ...config.get().workspaceIndexes,
+      [stats.workspaceHash]: {
+        indexed: true,
+        fileCount: stats.fileCount,
+        workspaceHash: stats.workspaceHash,
+      },
+    },
+  });
+}
+
+/**
+ * Force a clean, full rebuild of the workspace index (drop + re-index
+ * everything), invoked via the "LocalPilot: Rebuild Index" command. Activation
+ * uses an incremental reconcile, which leaves an unchanged file alone — so it
+ * can't collapse duplicate chunks left over from before the append-only bug was
+ * fixed. This command is the recovery path: indexWorkspace drops the table
+ * first, guaranteeing a single clean copy of every chunk. Never throws — errors
+ * surface in the Output Channel and a notification.
+ */
+async function runForceRebuild(
+  context: vscode.ExtensionContext,
+  logger: Logger,
+  channel: vscode.OutputChannel,
+  ollama: OllamaService,
+  config: ConfigManager,
+): Promise<void> {
+  if (rebuildInFlight) {
+    void vscode.window.showInformationMessage(
+      "LocalPilot: an index rebuild is already running.",
+    );
+    return;
+  }
+
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showWarningMessage(
+      "LocalPilot: open a workspace folder before rebuilding the index.",
+    );
+    return;
+  }
+
+  await config.load();
+  const embeddingModel = config.get().embeddingModel;
+  if (!embeddingModel) {
+    void vscode.window.showWarningMessage(
+      "LocalPilot: no embedding model configured yet — let activation finish first.",
+    );
+    return;
+  }
+
+  rebuildInFlight = true;
+  channel.show(true);
+  try {
+    const indexManager = new IndexManager({
+      ollama,
+      storageDir: context.globalStorageUri.fsPath,
+      workspacePath: folder.uri.fsPath,
+      embeddingModel,
+      logger,
+    });
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "LocalPilot: rebuilding index…",
+        cancellable: false,
+      },
+      async (report) => {
+        logger.info(`Force-rebuilding index for ${folder.uri.fsPath}...`);
+        const stats = await indexManager.indexWorkspace((progress) => {
+          if (
+            progress.current === progress.total ||
+            progress.current % 10 === 0
+          )
+            logger.info(
+              `  indexed ${progress.current}/${progress.total} files`,
+            );
+          report.report({
+            message: `${progress.current}/${progress.total} files`,
+          });
+        });
+        await recordIndexState(config, stats);
+        logger.info(
+          `Index rebuilt: ${stats.fileCount} files, ${stats.chunkCount} chunks.`,
+        );
+        void vscode.window.showInformationMessage(
+          `LocalPilot: index rebuilt — ${stats.fileCount} files, ` +
+            `${stats.chunkCount} chunks.`,
+        );
+      },
+    );
+  } catch (err) {
+    logger.error("Index rebuild failed", err);
+    void vscode.window.showErrorMessage(
+      "LocalPilot: index rebuild failed — see the LocalPilot output channel.",
+    );
+  } finally {
+    rebuildInFlight = false;
+  }
 }
 
 /**

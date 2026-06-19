@@ -255,6 +255,7 @@ export class IndexManager {
     if (!this.isIndexablePath(filePath)) return;
     const release = await this.acquireLock();
     try {
+      this.logger.info("updateFile triggered");
       await this.deleteChunksFor(filePath);
       const records = await this.buildRecords(filePath);
       if (records.length > 0) await this.insert(records);
@@ -265,6 +266,7 @@ export class IndexManager {
 
   /** Remove all chunks belonging to a deleted file. */
   async deleteFile(filePath: string): Promise<void> {
+    this.logger.info("deleteFile triggered");
     const release = await this.acquireLock();
     try {
       await this.deleteChunksFor(filePath);
