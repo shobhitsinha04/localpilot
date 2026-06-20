@@ -97,6 +97,12 @@ function showRetrievalStatus(): void {
   scrollToBottom(true);
 }
 
+/** Remove any retrieval status/chips from a previous turn. */
+function clearRetrieval(): void {
+  conversation.querySelectorAll(".retrieval").forEach((el) => el.remove());
+  retrievalEl = null;
+}
+
 /** Swap the status for the retrieved-file chips (or a "none found" note). */
 function showRetrievalResult(files: string[]): void {
   if (!retrievalEl) return;
@@ -252,6 +258,8 @@ function autoGrow(): void {
 function submit(): void {
   const text = input.value.trim();
   if (generating || text.length === 0) return;
+  // Clear the previous turn's codebase chips so only the latest set shows.
+  clearRetrieval();
   addUserBubble(text);
   post({ type: "sendMessage", text });
   input.value = "";
@@ -297,8 +305,9 @@ newChatBtn.addEventListener("click", () => {
 function clearChat(): void {
   post({ type: "newChat" });
   conversation
-    .querySelectorAll(".msg, .msg-error")
+    .querySelectorAll(".msg, .msg-error, .retrieval")
     .forEach((el) => el.remove());
+  retrievalEl = null;
   emptyState.style.display = "";
   assistantEl = null;
   assistantBuffer = "";

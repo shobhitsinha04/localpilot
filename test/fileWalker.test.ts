@@ -21,6 +21,15 @@ describe("FileWalker pure predicates", () => {
     expect(shouldSkipDir("src")).toBe(false);
   });
 
+  it("skips Python virtual environments and tooling caches", () => {
+    expect(shouldSkipDir("venv")).toBe(true);
+    expect(shouldSkipDir(".venv")).toBe(true);
+    expect(shouldSkipDir("site-packages")).toBe(true);
+    expect(shouldSkipDir(".pytest_cache")).toBe(true);
+    expect(shouldSkipDir("target")).toBe(true);
+    expect(shouldSkipDir("app")).toBe(false);
+  });
+
   it("detects binary extensions case-insensitively", () => {
     expect(hasBinaryExtension("logo.PNG")).toBe(true);
     expect(hasBinaryExtension("app.dylib")).toBe(true);

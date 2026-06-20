@@ -134,11 +134,35 @@ export const RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Directories never descended into during indexing (DATA_FLOW.md §5). */
 export const SKIP_DIRS: ReadonlySet<string> = new Set([
+  // VCS + JS deps
   "node_modules",
   ".git",
+  // Build / generated output
   "dist",
   "build",
+  "out",
+  "target", // Rust / Java
+  "vendor", // Go / PHP
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  "coverage",
+  // Python virtual environments + caches (often large, never the user's code)
+  "venv",
+  ".venv",
+  "env",
+  "virtualenv",
+  "site-packages",
   "__pycache__",
+  ".tox",
+  ".nox",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  // Tooling caches
+  ".cache",
+  ".gradle",
+  ".idea",
 ]);
 
 /** Extensions treated as binary (skipped) without a content sniff. */
@@ -249,8 +273,13 @@ export const MAX_HISTORY_MESSAGES = 20;
  * response can legitimately stream for a long time, so this aborts only when no
  * response has *started*; once tokens flow, streaming continues until done or
  * the user presses Stop (FEATURES.md §3 timeout state).
+ *
+ * Set generously (2 min) because time-to-first-token covers prompt *prefill*,
+ * which is slow for large prompts (an @codebase turn adds 8 retrieved chunks)
+ * and slower still when the model is cold-loaded or the machine is under memory
+ * pressure. A tighter budget aborted legitimate-but-slow first tokens.
  */
-export const CHAT_FIRST_TOKEN_TIMEOUT_MS = 30_000;
+export const CHAT_FIRST_TOKEN_TIMEOUT_MS = 120_000;
 
 // ----------------------------------------------------------------------------
 // Inline completions (PHASES.md Phase 4 / DATA_FLOW.md §1)
