@@ -374,4 +374,41 @@ describe("IndexManager storage (indexWorkspace + reconcile)", () => {
     expect(embedder.calls()).toBe(baseline);
     expect(names(await readRows(m2.workspaceHash))).toEqual(["a.ts"]);
   });
+
+  it("a primed reader sees a writer's updateFile (cross-handle consistency)", async () => {
+    await writeFileIn("a.ts", "export const alpha = 1;\n");
+    const writer = newManager();
+    await writer.indexWorkspace();
+
+    // Reader opens + caches its table handle by searching once (old version).
+    const reader = newManager();
+    const before = await reader.search("anything");
+    expect(before.some((h) => h.text.includes("alpha"))).toBe(true);
+
+    // A different handle updates the file.
+    await writeFileIn("a.ts", "export const beta = 2;\n");
+    await writer.updateFile(path.join(workspace, "a.ts"));
+
+    // The reader must now see the new content, not its stale snapshot.
+    const after = await reader.search("anything");
+    expect(after.some((h) => h.text.includes("beta"))).toBe(true);
+    expect(after.some((h) => h.text.includes("alpha"))).toBe(false);
+  });
+
+  it("search() reflects updateFile() on the same long-lived manager", async () => {
+    await writeFileIn("a.ts", "export const alpha = 1;\n");
+    const m = newManager();
+    await m.indexWorkspace();
+
+    const before = await m.search("anything");
+    expect(before.some((h) => h.text.includes("alpha"))).toBe(true);
+
+    // Edit the file and push the update through the SAME manager, as a save does.
+    await writeFileIn("a.ts", "export const beta = 2;\n");
+    await m.updateFile(path.join(workspace, "a.ts"));
+
+    const after = await m.search("anything");
+    expect(after.some((h) => h.text.includes("beta"))).toBe(true);
+    expect(after.some((h) => h.text.includes("alpha"))).toBe(false);
+  });
 });

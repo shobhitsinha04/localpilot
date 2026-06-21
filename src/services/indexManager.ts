@@ -456,7 +456,15 @@ export class IndexManager {
   private async connect(): Promise<lancedb.Connection> {
     if (!this.db) {
       await mkdir(this.indexDir, { recursive: true });
-      this.db = await lancedb.connect(this.indexDir);
+      // readConsistencyInterval: 0 → every read checks for the latest committed
+      // version before serving. Without it, a table handle never sees writes
+      // made through another handle/process (LanceDB's default for perf), so an
+      // incremental updateFile would not reach a chat search opened earlier — or
+      // a second VS Code window sharing this index — and @codebase answered from
+      // a stale snapshot. Strong consistency is cheap for a local on-disk index.
+      this.db = await lancedb.connect(this.indexDir, {
+        readConsistencyInterval: 0,
+      });
     }
     return this.db;
   }
