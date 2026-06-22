@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 
 import { MAX_CONTEXT_FILE_LINES } from "./constants";
 import { IndexManager } from "./services/indexManager";
-import { PendingBarrier } from "./services/pendingBarrier";
 import type { OllamaService } from "./services/ollamaService";
 import type {
   FileContext,
@@ -31,12 +30,6 @@ export interface ContextServiceOptions {
 
 export class ContextService {
   private readonly index: IndexManager;
-  /**
-   * In-flight index writes (saves, reconcile, rebuild). retrieve() waits on
-   * these so an @codebase search never reads a half-updated index — the source
-   * of stale/hallucinated answers when querying right after a save.
-   */
-  private readonly indexing = new PendingBarrier();
   /**
    * The most recent editor the user worked in. Tracked because focusing the
    * chat webview clears `window.activeTextEditor`, which would otherwise lose
@@ -80,12 +73,12 @@ export class ContextService {
 
   /** Incremental reconcile against on-disk mtimes (activation path). */
   reconcile(onProgress?: (p: IndexProgress) => void): Promise<IndexStats> {
-    return this.indexing.track(this.index.reconcile(onProgress));
+    return this.index.reconcile(onProgress);
   }
 
   /** Clean drop-then-rebuild of the whole index (Rebuild Index command). */
   indexWorkspace(onProgress?: (p: IndexProgress) => void): Promise<IndexStats> {
-    return this.indexing.track(this.index.indexWorkspace(onProgress));
+    return this.index.indexWorkspace(onProgress);
   }
 
   /** True if this workspace already has a non-empty index. */
@@ -93,25 +86,22 @@ export class ContextService {
     return this.index.isIndexed();
   }
 
-  /** Re-index a single changed file (file watcher / save). */
+  /** Re-index a single changed file (file watcher). */
   updateFile(filePath: string): Promise<void> {
-    return this.indexing.track(this.index.updateFile(filePath));
+    return this.index.updateFile(filePath);
   }
 
   /** Drop a deleted file's chunks (file watcher). */
   deleteFile(filePath: string): Promise<void> {
-    return this.indexing.track(this.index.deleteFile(filePath));
+    return this.index.deleteFile(filePath);
   }
 
   /**
    * Retrieve the reranked top chunks for an @codebase query (DATA_FLOW.md §4
-   * steps 2–4). Waits for any in-flight index writes (a just-saved file, a
-   * running reconcile/rebuild) to settle first, so the search never reads a
-   * half-updated index. Returns [] when nothing is indexed yet, so callers can
-   * show a graceful "index not ready" / "no results" state.
+   * steps 2–4). Returns [] when nothing is indexed yet, so callers can show a
+   * graceful "index not ready" / "no results" state.
    */
-  async retrieve(query: string): Promise<RetrievedChunk[]> {
-    await this.indexing.settle();
+  retrieve(query: string): Promise<RetrievedChunk[]> {
     return this.index.search(query);
   }
 }
