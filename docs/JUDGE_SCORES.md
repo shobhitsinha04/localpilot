@@ -14,6 +14,29 @@ Dimensions: **Spec** (Spec Compliance) · **Arch** (Architecture) ·
 
 ---
 
+## Phase 6 — @codebase + Onboarding UI
+
+| Run | Date | Spec | Arch | Err | Priv | Qual | Test | Total | Status |
+|-----|------|------|------|-----|------|------|------|-------|--------|
+| 1 | 2026-06-24 | 4 | 5 | 4 | 5 | 5 | 4 | 27 | APPROVED |
+
+**Run 1 notes:** Approved cold at 27/30, no Critical findings. Judge ran the
+gates itself (typecheck/lint pass, 159 tests green at review time) and verified
+Privacy directly (all HTTP → `127.0.0.1:11434`; only sanctioned external URL is
+`ollama.com/install.sh`; KaTeX bundled locally; CSP `default-src 'none'`). Four
+Minor findings. **Fixed before close:** (a) `OnboardingController` had no unit
+test → extracted the pure `formatEta` and added `test/onboardingController.test.ts`
+(now 163 tests); (b) a swallowed `retrieve()` error answered from zero context
+silently → now posts a distinct "couldn't search your codebase" notice and
+aborts. **Deferred to Phase 7** (functional/polish, logged in CHANGELOG):
+resume-from-interrupted onboarding (`onboardingStep` persisted but unread;
+re-running is idempotent), and the spec's specific disk-full onboarding message
+(currently the generic retry). Observation: `CHAT_FIRST_TOKEN_TIMEOUT_MS` 30→120s
+is undocumented in DECISIONS. The `format:check` red was solely `README.md`
+(fixed via Prettier before merge).
+
+---
+
 ## Phase 5 — CMD+K Inline Editing
 
 | Run | Date | Spec | Arch | Err | Priv | Qual | Test | Total | Status |

@@ -12,12 +12,12 @@ leaves your computer: every model call goes to `127.0.0.1`.
 
 ## What you get
 
-| Feature | How to use it |
-| --- | --- |
-| **Tab autocomplete** | Pause while typing in a supported language; ghost text appears. **Tab** to accept, **Esc** to dismiss. |
+| Feature                  | How to use it                                                                                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tab autocomplete**     | Pause while typing in a supported language; ghost text appears. **Tab** to accept, **Esc** to dismiss.                                                                     |
 | **Cmd+K inline editing** | Select code, press **Cmd+K**, type an instruction. The rewrite streams in as a red/green diff. **Cmd+Enter** to accept, **Esc** to reject (restores the original exactly). |
-| **Sidebar chat** | Click the LocalPilot icon in the activity bar. Streaming answers, your current file as automatic context, markdown + syntax highlighting, **Stop** / **New Chat**. |
-| **`@codebase` search** | Type `@codebase` in a chat message to ground the answer in your indexed project, with file/line citations. |
+| **Sidebar chat**         | Click the LocalPilot icon in the activity bar. Streaming answers, your current file as automatic context, markdown + syntax highlighting, **Stop** / **New Chat**.         |
+| **`@codebase` search**   | Type `@codebase` in a chat message to ground the answer in your indexed project, with file/line citations.                                                                 |
 
 A toggle in the chat header turns inline completions on/off live.
 

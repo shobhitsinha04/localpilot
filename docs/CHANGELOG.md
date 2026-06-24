@@ -9,6 +9,77 @@ the current state of the codebase before writing any new code.
 
 ---
 
+## Phase 6 — @codebase + Onboarding UI
+**Status:** Approved by Judge Agent
+**Judge Score:** 27/30 (see JUDGE_SCORES.md)
+
+### What Was Built
+
+The product is now feature-complete for v1: `@codebase` retrieval is wired into
+chat, and the full first-run onboarding flow ships.
+
+**@codebase retrieval (DATA_FLOW.md §4).** A new `ContextService`
+(src/contextService.ts) is the single per-workspace seam (DECISIONS 016): it owns
+the one `IndexManager`, gathers active-file context (moved out of
+`ChatViewProvider`), and exposes `retrieve()`. Chat detects a leading/trailing
+`@codebase` token, strips it, embeds the query, vector-searches (top 20),
+reranks (0.7×similarity + 0.3×recency → top 8), assembles a labelled context
+block (`// File: <name> (lines a-b)`), and answers with the codebase system
+prompt. The webview shows a "Searching codebase…" status then retrieved-file
+chips. Edge cases handled: no workspace, empty query, index-not-ready,
+zero-results, and a distinct "couldn't search your codebase" notice when
+retrieval throws. Pure logic (`parseCodebaseQuery`, `formatCodebaseContext`,
+`buildCodebaseChatPrompt`) lives in `PromptEngine`.
+
+**Onboarding UI (ONBOARDING_FLOW.md, DECISIONS 017).** A `vscode`-free
+`OnboardingController` (src/onboardingController.ts) sequences the 7 steps
+(welcome → hardware → model selection → Ollama install/start → model downloads
+with % + ETA → indexing with file count → ready), rendered as a mode of the chat
+webview, pausing at the Get Started / Download Models / Start Coding gates. On
+completion it sets `onboardingComplete`, registers the gated features, and swaps
+to chat. Activation routes: a silent `ensureReady` (start Ollama, register
+completions, reconcile + watch) when onboarded, vs. opening onboarding when not.
+A **model-aware recovery** check re-runs onboarding if `onboardingComplete` is
+true but a required model (chat/embedding) is missing (e.g. a manual `ollama
+rm`), using a `:latest`-tolerant presence check. `LocalPilot: Reset and Re-run
+Setup` relaunches the flow. Features (completions, `@codebase`) are gated behind
+`onboardingComplete`.
+
+**Indexing robustness (from F5 testing).** LanceDB opened with
+`readConsistencyInterval: 0` so a reader handle always sees the latest committed
+writes; incremental updates driven by `onDidSaveTextDocument` (the watcher's
+`onDidChange` is unreliable for editor saves); `indexWorkspace` drops-and-rebuilds
+to avoid duplicate chunks; `reconcile` does an mtime diff on activation to catch
+offline edits/adds/deletes; SKIP_DIRS expanded to skip virtual envs / caches /
+build output. Source-tagged incremental-index logging and an activation
+heartbeat were added for debuggability.
+
+**KaTeX math rendering (TECH_STACK, user-approved dep).** Chat/@codebase answers
+render `$…$` / `$$…$$` via KaTeX (two small Marked extensions); CSS + fonts are
+copied into media/ by esbuild and loaded locally (CSP-safe). The system prompts
+were tightened to be concise, grounded, and to emit KaTeX-renderable math.
+
+163 Vitest tests (up from ~134): adds `@codebase` prompt/parse/format coverage,
+onboarding protocol parsing, `formatEta`, venv skip rules, and IndexManager
+read-consistency/idempotency/reconcile tests. Webview UI remains F5-verified.
+
+### Decisions / Notes
+- **DECISIONS 016** — ContextService as the single context seam.
+- **DECISIONS 017** — onboarding is a mode of the chat webview, not a 2nd view.
+- New dependency **katex** recorded in TECH_STACK.md (the only new runtime dep).
+- `CHAT_FIRST_TOKEN_TIMEOUT_MS` raised 30s → 120s to cover @codebase prefill /
+  cold model load (noted as an observation; not yet a formal DECISIONS entry).
+
+### Deferred to Phase 7 (logged from the Judge review)
+- **Resume-from-interrupted onboarding** — `onboardingStep` is persisted but not
+  yet read; an interrupted setup restarts at Step 0 (re-running is fast and
+  idempotent, so functionally safe).
+- **Disk-full onboarding error state** — currently collapsed into the generic
+  "Setup hit a snag" retry rather than the spec's specific out-of-disk message.
+- Onboarding copy/visual polish to fully match ONBOARDING_FLOW.md.
+
+---
+
 ## Phase 5 — CMD+K Inline Editing
 **Status:** Approved by Judge Agent
 **Judge Score:** 27/30 (see JUDGE_SCORES.md)
