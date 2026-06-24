@@ -13,6 +13,7 @@ import { Marked, type TokenizerAndRendererExtension } from "marked";
 import type {
   ErrorAction,
   HostMessage,
+  OnboardingView,
   WebviewMessage,
 } from "../webviewProtocol";
 
@@ -104,6 +105,15 @@ const modelName = document.getElementById("model-name") as HTMLElement;
 const autocompleteToggle = document.getElementById(
   "toggle-autocomplete",
 ) as HTMLInputElement;
+
+// Onboarding (WP2)
+const obTitle = document.getElementById("ob-title") as HTMLElement;
+const obDetail = document.getElementById("ob-detail") as HTMLElement;
+const obSpinner = document.getElementById("ob-spinner") as HTMLElement;
+const obProgress = document.getElementById("ob-progress") as HTMLElement;
+const obBarFill = document.getElementById("ob-bar-fill") as HTMLElement;
+const obEta = document.getElementById("ob-eta") as HTMLElement;
+const obAction = document.getElementById("ob-action") as HTMLButtonElement;
 
 // --- state ------------------------------------------------------------------
 let generating = false;
@@ -436,13 +446,51 @@ emptyState.querySelectorAll("[data-try]").forEach((el) => {
   });
 });
 
+// --- onboarding (WP2) -------------------------------------------------------
+function renderOnboarding(v: OnboardingView): void {
+  document.body.classList.add("onboarding-active");
+  obTitle.textContent = v.title;
+  obDetail.textContent = v.detail;
+
+  const isProgress = v.mode === "progress";
+  obProgress.hidden = !isProgress;
+  if (isProgress) {
+    const pct = Math.max(0, Math.min(100, v.percent ?? 0));
+    obBarFill.style.width = `${pct}%`;
+    obEta.textContent = v.eta ?? "";
+  }
+
+  obSpinner.hidden = !(v.mode === "info" || isProgress);
+
+  if (v.actionId && v.actionLabel) {
+    obAction.hidden = false;
+    obAction.disabled = false;
+    obAction.textContent = v.actionLabel;
+    obAction.dataset.action = v.actionId;
+  } else {
+    obAction.hidden = true;
+  }
+}
+
+obAction.addEventListener("click", () => {
+  const id = obAction.dataset.action;
+  if (!id) return;
+  obAction.disabled = true; // prevent double-trigger on slow steps
+  post({ type: "onboardingAction", id } as WebviewMessage);
+});
+
 // --- host → webview ---------------------------------------------------------
 window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
   const msg = event.data;
   switch (msg.type) {
     case "init":
+      // Leaving onboarding (or never in it) → show the chat UI.
+      document.body.classList.remove("onboarding-active");
       modelName.textContent = msg.model;
       autocompleteToggle.checked = msg.autocompleteEnabled;
+      break;
+    case "onboarding":
+      renderOnboarding(msg.view);
       break;
     case "retrievalStart":
       showRetrievalStatus();

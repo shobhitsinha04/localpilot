@@ -9,6 +9,7 @@ import {
   EMBEDDING_MODEL,
 } from "./constants";
 import { ContextService } from "./contextService";
+import { OnboardingController } from "./onboardingController";
 import { ConfigManager } from "./services/configManager";
 import { HardwareDetector, modelsForTier } from "./services/hardwareDetector";
 import { OllamaService } from "./services/ollamaService";
@@ -67,6 +68,37 @@ export function activate(context: vscode.ExtensionContext): void {
       })
     : undefined;
 
+  // Phase 3 — the sidebar chat panel (FEATURES.md §3). Constructed up front so
+  // the onboarding controller and the reset command can reference it.
+  const chatProvider = new ChatViewProvider(
+    context.extensionUri,
+    ollama,
+    config,
+    logger,
+    contextService,
+  );
+
+  // Phase 6 WP2 — onboarding. The controller drives the setup steps and renders
+  // them in the chat webview; on completion it lights up the gated features.
+  const finalizeSetup = async (): Promise<void> => {
+    try {
+      await registerCompletionProvider(context, logger, config, ollama);
+    } catch (err) {
+      logger.error("Failed to register inline completion provider", err);
+    }
+    if (contextService) registerIndexWatcher(context, logger, contextService);
+  };
+  const onboarding = new OnboardingController({
+    ollama,
+    config,
+    contextService,
+    logger,
+    post: (view) => chatProvider.postOnboarding(view),
+    finalize: finalizeSetup,
+    showChat: () => chatProvider.showChat(),
+  });
+  chatProvider.attachOnboarding(onboarding);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("localpilot.helloWorld", () => {
       vscode.window.showInformationMessage("Hello World from LocalPilot!");
@@ -85,25 +117,18 @@ export function activate(context: vscode.ExtensionContext): void {
       void runForceRebuild(logger, channel, config, contextService);
     }),
     vscode.commands.registerCommand("localpilot.resetSetup", () => {
-      void runResetSetup(
-        context,
-        logger,
-        channel,
-        ollama,
-        config,
-        contextService,
-      );
+      void (async () => {
+        await config.load();
+        await config.update({ onboardingComplete: false, onboardingStep: 0 });
+        logger.info("Onboarding reset; relaunching setup.");
+        await vscode.commands.executeCommand(
+          `${ChatViewProvider.viewType}.focus`,
+        );
+        onboarding.begin();
+      })();
     }),
   );
 
-  // Phase 3 — register the sidebar chat panel (FEATURES.md §3).
-  const chatProvider = new ChatViewProvider(
-    context.extensionUri,
-    ollama,
-    config,
-    logger,
-    contextService,
-  );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       ChatViewProvider.viewType,
@@ -137,7 +162,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Fire-and-forget so a long model pull never blocks VS Code activation.
-  void runActivation(context, logger, channel, ollama, config, contextService);
+  void runActivation(context, logger, ollama, config, contextService);
 }
 
 export function deactivate(): void {
@@ -308,35 +333,78 @@ async function runSmokeTest(
 }
 
 /**
- * Activation router (WP2 PR A). Decides what runs on each activation based on
- * the persisted onboarding state:
- *  - not onboarded → run the full setup (currently headless via runSmokeTest;
- *    the interactive webview onboarding lands in WP2 PR B), which marks
- *    onboardingComplete on success.
+ * Activation router (WP2). Decides what runs on each activation from the
+ * persisted onboarding state:
  *  - already onboarded → a silent ensure-ready: start Ollama if needed, register
  *    the (gated) completion provider, reconcile the index, and watch for edits —
  *    no model-selection chatter, no "say hello" test, minimal Output noise.
+ *  - not onboarded → reveal the chat panel so the onboarding webview drives
+ *    setup interactively (OnboardingController). The developer headless setup is
+ *    still available via the "Run Phase 1 Smoke Test" command.
  */
 async function runActivation(
   context: vscode.ExtensionContext,
   logger: Logger,
-  channel: vscode.OutputChannel,
   ollama: OllamaService,
   config: ConfigManager,
   contextService: ContextService | undefined,
 ): Promise<void> {
   await config.load();
-  if (config.get().onboardingComplete) {
-    await ensureReady(context, logger, ollama, config, contextService);
-  } else {
-    await runSmokeTest(
-      context,
-      logger,
-      channel,
-      ollama,
-      config,
-      contextService,
+  const cfg = config.get();
+
+  // Not set up yet → open the onboarding webview.
+  if (!cfg.onboardingComplete) {
+    logger.info("Onboarding not complete — opening setup.");
+    await openOnboarding(config);
+    return;
+  }
+
+  // Set up before, but the required models can go missing (manual `ollama rm`, a
+  // cleared cache). That would leave chat/@codebase broken with no recovery, so
+  // verify they're actually installed; if any are gone, re-run onboarding.
+  const missing = await missingRequiredModels(ollama, cfg);
+  if (missing.length > 0) {
+    logger.warn(
+      `Required model(s) not installed: ${missing.join(", ")}. Re-running setup.`,
     );
+    await openOnboarding(config);
+    return;
+  }
+
+  await ensureReady(context, logger, ollama, config, contextService);
+}
+
+/** Flip onboarding back to incomplete and reveal the panel so its UI runs. */
+async function openOnboarding(config: ConfigManager): Promise<void> {
+  if (config.get().onboardingComplete) {
+    await config.update({ onboardingComplete: false, onboardingStep: 0 });
+  }
+  await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
+}
+
+/**
+ * Which of the required models (chat + embedding) are not installed. Tolerant of
+ * Ollama's `:latest` tagging (an untagged config name like "nomic-embed-text" is
+ * stored as "nomic-embed-text:latest"). Returns [] when the daemon can't be
+ * reached or listed — we don't want a transient daemon hiccup to force a
+ * spurious re-onboard; ensureReady surfaces a dead daemon instead.
+ */
+async function missingRequiredModels(
+  ollama: OllamaService,
+  cfg: { chatModel: string | null; embeddingModel: string | null },
+): Promise<string[]> {
+  try {
+    if (!(await ollama.isRunning())) await ollama.start();
+    const installed = await ollama.listModelNames();
+    const present = (model: string): boolean =>
+      installed.includes(model) ||
+      (!model.includes(":") && installed.includes(`${model}:latest`));
+    const required = [cfg.chatModel, cfg.embeddingModel].filter(
+      (m): m is string => !!m,
+    );
+    return required.filter((m) => !present(m));
+  } catch {
+    return [];
   }
 }
 
@@ -393,25 +461,6 @@ async function ensureReady(
   } catch (err) {
     logger.error("ensureReady failed", err);
   }
-}
-
-/**
- * "Reset and Re-run Setup" command (ONBOARDING_FLOW.md). Clears the onboarding
- * state, then re-runs setup from scratch.
- */
-async function runResetSetup(
-  context: vscode.ExtensionContext,
-  logger: Logger,
-  channel: vscode.OutputChannel,
-  ollama: OllamaService,
-  config: ConfigManager,
-  contextService: ContextService | undefined,
-): Promise<void> {
-  await config.load();
-  await config.update({ onboardingComplete: false, onboardingStep: 0 });
-  logger.info("Onboarding state reset; re-running setup.");
-  void vscode.window.showInformationMessage("LocalPilot: re-running setup…");
-  await runSmokeTest(context, logger, channel, ollama, config, contextService);
 }
 
 /**

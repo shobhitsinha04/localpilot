@@ -6,6 +6,35 @@
 /** Actionable button attached to an inline error (UI_UX.md "Error Messages"). */
 export type ErrorAction = "restart" | "retry";
 
+/** Buttons the onboarding flow can show (ONBOARDING_FLOW.md). */
+export type OnboardingActionId =
+  | "getStarted"
+  | "downloadModels"
+  | "startCoding"
+  | "retry";
+
+/**
+ * One render of the onboarding screen (Phase 6 WP2). The host drives the whole
+ * screen with this single shape so the protocol stays small; the webview renders
+ * by `mode`.
+ */
+export interface OnboardingView {
+  /** Current step (0-based) and total, for the step indicator. */
+  step: number;
+  total: number;
+  title: string;
+  detail: string;
+  /** info = spinner/text, progress = bar, prompt = button, error/ready. */
+  mode: "info" | "progress" | "prompt" | "error" | "ready";
+  /** 0–100 for `progress`. */
+  percent?: number;
+  /** e.g. "about 4 minutes remaining". */
+  eta?: string;
+  /** A button to show (prompt/error/ready modes). */
+  actionId?: OnboardingActionId;
+  actionLabel?: string;
+}
+
 /** Messages the webview sends to the extension host. */
 export type WebviewMessage =
   | { type: "ready" }
@@ -14,11 +43,13 @@ export type WebviewMessage =
   | { type: "newChat" }
   | { type: "restart" }
   | { type: "retry" }
-  | { type: "setAutocomplete"; enabled: boolean };
+  | { type: "setAutocomplete"; enabled: boolean }
+  | { type: "onboardingAction"; id: OnboardingActionId };
 
 /** Messages the extension host sends to the webview. */
 export type HostMessage =
   | { type: "init"; model: string; autocompleteEnabled: boolean }
+  | { type: "onboarding"; view: OnboardingView }
   | { type: "retrievalStart" }
   | { type: "retrievalComplete"; files: string[] }
   | { type: "streamStart" }
@@ -49,6 +80,17 @@ export function parseWebviewMessage(raw: unknown): WebviewMessage | null {
       return typeof m.enabled === "boolean"
         ? { type: "setAutocomplete", enabled: m.enabled }
         : null;
+    case "onboardingAction": {
+      const ids: OnboardingActionId[] = [
+        "getStarted",
+        "downloadModels",
+        "startCoding",
+        "retry",
+      ];
+      return ids.includes(m.id as OnboardingActionId)
+        ? { type: "onboardingAction", id: m.id as OnboardingActionId }
+        : null;
+    }
     default:
       return null;
   }

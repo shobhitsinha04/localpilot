@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import type { ContextService } from "./contextService";
+import type { OnboardingController } from "./onboardingController";
 import { ConversationManager } from "./services/conversationManager";
 import { OllamaError, type OllamaService } from "./services/ollamaService";
 import {
@@ -14,6 +15,7 @@ import {
   parseWebviewMessage,
   type ErrorAction,
   type HostMessage,
+  type OnboardingView,
 } from "./webviewProtocol";
 
 // The sidebar chat panel (FEATURES.md §3, DATA_FLOW.md §3, UI_UX.md). A
@@ -32,6 +34,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private currentRequest?: AbortController;
   /** The last message the user sent, re-sent by the "Retry" error action. */
   private pendingMessage?: string;
+  /** Drives the onboarding screen when setup isn't complete (WP2). */
+  private onboarding?: OnboardingController;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -58,7 +62,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!msg) return;
       switch (msg.type) {
         case "ready":
-          void this.sendInit();
+          void this.onReady();
+          break;
+        case "onboardingAction":
+          void this.onboarding?.handleAction(msg.id);
           break;
         case "sendMessage":
           void this.handleUserMessage(msg.text);
@@ -83,6 +90,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
       }
     });
+  }
+
+  /** Wire the onboarding controller (created in extension.ts) to this view. */
+  attachOnboarding(controller: OnboardingController): void {
+    this.onboarding = controller;
+  }
+
+  /** Send an onboarding screen to the webview (called by the controller). */
+  postOnboarding(view: OnboardingView): void {
+    this.post({ type: "onboarding", view });
+  }
+
+  /** Switch the webview from onboarding to chat (called when setup completes). */
+  showChat(): void {
+    void this.sendInit();
+  }
+
+  /**
+   * On webview ready: show onboarding if setup isn't complete (and a controller
+   * is wired), otherwise initialise the chat UI.
+   */
+  private async onReady(): Promise<void> {
+    await this.config.load();
+    if (!this.config.get().onboardingComplete && this.onboarding) {
+      this.onboarding.begin();
+    } else {
+      await this.sendInit();
+    }
   }
 
   private async sendInit(): Promise<void> {
@@ -302,6 +337,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <title>LocalPilot</title>
 </head>
 <body>
+  <!-- Onboarding overlay (WP2). Hidden until the host sends an "onboarding"
+       message; CSS hides the chat UI while body.onboarding-active is set. -->
+  <section class="onboarding" id="onboarding" aria-live="polite">
+    <div class="ob-logo">◉ LocalPilot</div>
+    <div class="ob-title" id="ob-title"></div>
+    <div class="ob-detail" id="ob-detail"></div>
+    <div class="ob-spinner" id="ob-spinner" hidden></div>
+    <div class="ob-progress" id="ob-progress" hidden>
+      <div class="ob-bar"><div class="ob-bar-fill" id="ob-bar-fill"></div></div>
+      <div class="ob-eta" id="ob-eta"></div>
+    </div>
+    <button class="ob-action" id="ob-action" hidden></button>
+  </section>
+
   <header class="header">
     <div class="header-titles">
       <span class="wordmark">LocalPilot</span>

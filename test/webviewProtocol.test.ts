@@ -45,6 +45,19 @@ describe("parseWebviewMessage", () => {
     ).toBeNull();
   });
 
+  it("accepts onboardingAction with a known id and rejects others", () => {
+    expect(
+      parseWebviewMessage({ type: "onboardingAction", id: "getStarted" }),
+    ).toEqual({ type: "onboardingAction", id: "getStarted" });
+    expect(
+      parseWebviewMessage({ type: "onboardingAction", id: "startCoding" }),
+    ).toEqual({ type: "onboardingAction", id: "startCoding" });
+    expect(
+      parseWebviewMessage({ type: "onboardingAction", id: "bogus" }),
+    ).toBeNull();
+    expect(parseWebviewMessage({ type: "onboardingAction" })).toBeNull();
+  });
+
   it("rejects unknown types and non-object input", () => {
     expect(parseWebviewMessage({ type: "evil" })).toBeNull();
     expect(parseWebviewMessage(null)).toBeNull();
