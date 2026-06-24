@@ -215,7 +215,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     try {
       chunks = await this.context.retrieve(query);
     } catch (err) {
+      // A real retrieval failure is distinct from "no results" — tell the user
+      // and abort rather than silently answering from zero context.
       this.logger.error("Codebase retrieval failed", err);
+      this.post({ type: "retrievalComplete", files: [] });
+      this.postError("Couldn't search your codebase. Try again.", "retry");
+      return null;
     }
     // Show relative paths to the user and the model.
     const relChunks = chunks.map((c) => ({

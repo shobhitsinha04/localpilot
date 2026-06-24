@@ -14,6 +14,25 @@ import type { OnboardingActionId, OnboardingView } from "./webviewProtocol";
 /** Total onboarding steps (0 Welcome … 6 Ready). */
 const TOTAL_STEPS = 7;
 
+/**
+ * Rough remaining-time estimate from elapsed time and percent complete, for the
+ * download progress screen. Pure (elapsed is passed in, not read from a clock)
+ * so it is unit-tested directly. Returns undefined when there's nothing
+ * meaningful to show (not started, or done).
+ */
+export function formatEta(
+  elapsedMs: number,
+  percent: number,
+): string | undefined {
+  if (percent <= 0 || percent >= 100) return undefined;
+  const remainingMs = (elapsedMs / percent) * (100 - percent);
+  const mins = Math.round(remainingMs / 60000);
+  if (mins >= 1)
+    return `about ${mins} minute${mins === 1 ? "" : "s"} remaining`;
+  const secs = Math.max(5, Math.round(remainingMs / 1000));
+  return `about ${secs}s remaining`;
+}
+
 /** Rough on-disk sizes for the download consent screen (ONBOARDING_FLOW.md). */
 const MODEL_SIZES: Record<string, string> = {
   "qwen2.5-coder:1.5b": "~1 GB",
@@ -267,15 +286,8 @@ export class OnboardingController {
     });
   }
 
-  /** Rough remaining-time estimate from elapsed time and percent complete. */
+  /** Remaining-time estimate for the download screen (see {@link formatEta}). */
   private eta(startedMs: number, percent: number): string | undefined {
-    if (percent <= 0 || percent >= 100) return undefined;
-    const elapsed = Date.now() - startedMs;
-    const remainingMs = (elapsed / percent) * (100 - percent);
-    const mins = Math.round(remainingMs / 60000);
-    if (mins >= 1)
-      return `about ${mins} minute${mins === 1 ? "" : "s"} remaining`;
-    const secs = Math.max(5, Math.round(remainingMs / 1000));
-    return `about ${secs}s remaining`;
+    return formatEta(Date.now() - startedMs, percent);
   }
 }
